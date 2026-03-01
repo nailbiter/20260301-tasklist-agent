@@ -194,7 +194,7 @@ def ask_agent(prompt: str) -> None:
     client = genai.Client(api_key=api_key)
 
     try:
-        with open("GEMINI.md", "r") as f:
+        with open("system_message.md", "r") as f:
             system_instruction = f.read()
     except FileNotFoundError:
         system_instruction = "You are a helpful task-management assistant."
