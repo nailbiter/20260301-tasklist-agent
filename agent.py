@@ -7,6 +7,7 @@ from pymongo import MongoClient
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from utils import get_configured_logger
 
 # Load environment variables
 load_dotenv()
@@ -27,6 +28,8 @@ def get_jira_tasks(
         status: The current status of the task (e.g., "To Do", "In Progress", "Done").
         is_current_sprint: If True, only returns tasks from the current active sprint.
     """
+    logger = get_configured_logger("get_jira_tasks", level="DEBUG")
+
     jira_url = os.getenv("JIRA_URL")
     jira_user = os.getenv("JIRA_USER") or os.getenv("JIRA_EMAIL")
     jira_api_token = os.getenv("JIRA_API_TOKEN")
@@ -85,11 +88,12 @@ def get_jira_tasks(
     try:
         # Per the 410 error message: migrate to /rest/api/3/search/jql
         url = f"{jira_url.rstrip('/')}/rest/api/3/search/jql"
-        params = {"jql": jql, "maxResults": 10}
+        params = {"jql": jql, "maxResults": 10, "fields": "*all"}
         response = requests.get(url, headers=headers, params=params, auth=auth)
         response.raise_for_status()
 
         data = response.json()
+        logger.debug(dict(data=data))
         tasks = []
         for issue in data.get("issues", []):
             tasks.append(
@@ -101,8 +105,10 @@ def get_jira_tasks(
                     "url": f"{jira_url.rstrip('/')}/browse/{issue['key']}",
                 }
             )
+        logger.debug(dict(len_tasks=len(tasks)))
         return json.dumps(tasks)
     except Exception as e:
+        logger.error(e)
         return json.dumps({"error": f"Failed to fetch Jira tasks: {str(e)}"})
 
 
