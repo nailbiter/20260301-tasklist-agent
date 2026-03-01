@@ -11,6 +11,11 @@ load_dotenv()
 # Tool Definitions (These will be exposed to Gemini)
 # ---------------------------------------------------------------------------
 
+import json
+import requests
+from requests.auth import HTTPBasicAuth
+from pymongo import MongoClient
+
 def get_jira_tasks(assignee: str = "me", status: str = "To Do") -> str:
     """
     Retrieves tasks from Jira based on assignee and status.
@@ -19,12 +24,43 @@ def get_jira_tasks(assignee: str = "me", status: str = "To Do") -> str:
         assignee: The person assigned to the task (default: "me").
         status: The current status of the task (e.g., "To Do", "In Progress", "Done").
     """
-    # TODO: Implement actual Jira API call using requests or jira-python
-    # Requires: os.getenv("JIRA_URL"), os.getenv("JIRA_USER"), os.getenv("JIRA_API_TOKEN")
-    print(f"[Tool Execution] Fetching Jira tasks for '{assignee}' with status '{status}'...")
+    jira_url = os.getenv("JIRA_URL")
+    jira_user = os.getenv("JIRA_USER")
+    jira_api_token = os.getenv("JIRA_API_TOKEN")
+
+    if not all([jira_url, jira_user, jira_api_token]):
+        return json.dumps({"error": "Jira environment variables are not fully configured."})
+
+    # Construct the JQL query
+    assignee_query = "currentUser()" if assignee == "me" else f'"{assignee}"'
+    jql = f'assignee = {assignee_query} AND status = "{status}"'
+
+    print(f"[Tool Execution] Fetching Jira tasks for '{assignee}' with status '{status}' using JQL: {jql}...")
     
-    # Mock return data
-    return '[{"id": "PROJ-123", "title": "Review PR for ML pipeline", "priority": "High"}]'
+    try:
+        url = f"{jira_url.rstrip('/')}/rest/api/3/search"
+        auth = HTTPBasicAuth(jira_user, jira_api_token)
+        headers = {"Accept": "application/json"}
+        params = {"jql": jql, "maxResults": 10}
+
+        response = requests.get(url, headers=headers, params=params, auth=auth)
+        response.raise_for_status()
+        
+        data = response.json()
+        tasks = []
+        for issue in data.get("issues", []):
+            tasks.append({
+                "id": issue["key"],
+                "title": issue["fields"].get("summary"),
+                "priority": issue["fields"].get("priority", {}).get("name"),
+                "status": issue["fields"].get("status", {}).get("name"),
+                "url": f"{jira_url.rstrip('/')}/browse/{issue['key']}"
+            })
+        
+        return json.dumps(tasks)
+
+    except Exception as e:
+        return json.dumps({"error": f"Failed to fetch Jira tasks: {str(e)}"})
 
 def get_mongo_tasks(priority: str = "High", due_today: bool = True) -> str:
     """
@@ -34,12 +70,47 @@ def get_mongo_tasks(priority: str = "High", due_today: bool = True) -> str:
         priority: The priority level of the task (e.g., "High", "Medium", "Low").
         due_today: Boolean indicating if only tasks due today should be returned.
     """
-    # TODO: Implement actual pymongo queries
-    # Requires: os.getenv("MONGO_URI"), os.getenv("MONGO_DB_NAME")
+    mongo_uri = os.getenv("MONGO_URI")
+    mongo_db_name = os.getenv("MONGO_DB_NAME")
+    
+    if not mongo_uri:
+        return json.dumps({"error": "MONGO_URI environment variable is not configured."})
+
     print(f"[Tool Execution] Fetching Mongo tasks (Priority: {priority}, Due Today: {due_today})...")
     
-    # Mock return data
-    return '[{"task": "Buy groceries", "priority": "High", "due": "Today"}]'
+    try:
+        client = MongoClient(mongo_uri)
+        
+        # Determine database and collection
+        if mongo_db_name:
+            db = client[mongo_db_name]
+            collection = db["gstasks.tasks"]
+        else:
+            db = client["gstasks"]
+            collection = db["tasks"]
+
+        query = {"priority": priority}
+        if due_today:
+            today_str = datetime.date.today().strftime("%Y-%m-%d")
+            # Support both string format and potentially datetime (though JQL-like agents often use strings)
+            # We'll stick to string for now as it's common in simple task stores
+            query["due"] = today_str
+
+        cursor = collection.find(query).limit(20)
+        tasks = []
+        for doc in cursor:
+            # Convert ObjectId and datetime to string for JSON serialization
+            if "_id" in doc:
+                doc["_id"] = str(doc["_id"])
+            if "due" in doc and isinstance(doc["due"], datetime.datetime):
+                doc["due"] = doc["due"].strftime("%Y-%m-%d")
+            tasks.append(doc)
+        
+        client.close()
+        return json.dumps(tasks)
+
+    except Exception as e:
+        return json.dumps({"error": f"Failed to fetch Mongo tasks: {str(e)}"})
 
 # ---------------------------------------------------------------------------
 # Agent Setup & Execution
@@ -72,9 +143,9 @@ def ask_agent(prompt: str) -> None:
     print(f"User: {prompt}\n")
     print("Agent is thinking...\n---")
     
-    # Using gemini-2.5-pro as it excels at complex tool calling and reasoning
+    # Using gemini-2.0-flash as it excels at complex tool calling and reasoning
     response = client.models.generate_content(
-        model='gemini-2.5-pro',
+        model='gemini-2.0-flash',
         contents=full_prompt,
         config=config,
     )
