@@ -1,2 +1,18 @@
-# 20260301-tasklist-agent
-Agent to access my tasklist (to be deployed in Cloud Run)
+# CLI Task Agent
+
+A command-line LLM agent powered by Gemini that aggregates and answers questions about tasks stored in Jira and a custom MongoDB.
+
+## Prerequisites
+
+* Python 3.10+
+* `google-genai` SDK
+* `python-dotenv`
+* `pymongo` (for database access)
+* `requests` or `jira` (for Jira access)
+
+## Setup
+
+1. **Install dependencies:**
+```bash
+pip install google-genai python-dotenv pymongo requests
+```
