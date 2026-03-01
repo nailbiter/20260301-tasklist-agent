@@ -48,6 +48,7 @@ def get_jira_tasks(
             print("[Warning] JIRA_BOARD_ID not set; skipping current sprint filter.")
         else:
             try:
+                # Note: Agile API endpoints usually don't have /rest/api/3/
                 sprint_url = (
                     f"{jira_url.rstrip('/')}/rest/agile/1.0/board/{board_id}/sprint"
                 )
@@ -55,18 +56,24 @@ def get_jira_tasks(
                 sprint_resp = requests.get(
                     sprint_url, headers=headers, params=sprint_params, auth=auth
                 )
-                sprint_resp.raise_for_status()
-                sprints = sprint_resp.json().get("values", [])
-                if sprints:
-                    sprint_id = sprints[0]["id"]
-                    sprint_filter = f" AND sprint = {sprint_id}"
-                    print(
-                        f"[Tool Execution] Found active sprint: {sprints[0].get('name')} (ID: {sprint_id})"
-                    )
+                if sprint_resp.status_code == 200:
+                    sprints = sprint_resp.json().get("values", [])
+                    if sprints:
+                        sprint_id = sprints[0]["id"]
+                        sprint_filter = f" AND sprint = {sprint_id}"
+                        print(
+                            f"[Tool Execution] Found active sprint: {sprints[0].get('name')} (ID: {sprint_id})"
+                        )
+                    else:
+                        print(
+                            f"[Warning] No active sprints found for board {board_id}."
+                        )
                 else:
-                    print(f"[Warning] No active sprints found for board {board_id}.")
+                    print(
+                        f"[Warning] Failed to fetch sprints (HTTP {sprint_resp.status_code}): {sprint_resp.text}"
+                    )
             except Exception as e:
-                print(f"[Warning] Failed to fetch sprints: {e}")
+                print(f"[Warning] Exception fetching sprints: {e}")
 
     assignee_query = "currentUser()" if assignee == "me" else f'"{assignee}"'
     jql = f'assignee = {assignee_query} AND status = "{status}"{sprint_filter}'
@@ -76,7 +83,8 @@ def get_jira_tasks(
     )
 
     try:
-        url = f"{jira_url.rstrip('/')}/rest/api/3/search"
+        # Per the 410 error message: migrate to /rest/api/3/search/jql
+        url = f"{jira_url.rstrip('/')}/rest/api/3/search/jql"
         params = {"jql": jql, "maxResults": 10}
         response = requests.get(url, headers=headers, params=params, auth=auth)
         response.raise_for_status()
@@ -98,12 +106,15 @@ def get_jira_tasks(
         return json.dumps({"error": f"Failed to fetch Jira tasks: {str(e)}"})
 
 
-def get_mongo_tasks(status: str = "TODO", due_today: bool = True) -> str:
+def get_mongo_tasks(
+    status: str = "TODO", when: str = None, due_today: bool = True
+) -> str:
     """
     Retrieves personal tasks from the custom MongoDB database.
 
     Args:
         status: The status of the task (e.g., "TODO", "DONE", "REGULAR", "FAILED").
+        when: A temporal indicator (e.g., "WEEKEND", "EVENING", "PARTTIME").
         due_today: Boolean indicating if only tasks due or scheduled for today should be returned.
     """
     mongo_uri = os.getenv("MONGO_URI")
@@ -115,7 +126,7 @@ def get_mongo_tasks(status: str = "TODO", due_today: bool = True) -> str:
         )
 
     print(
-        f"[Tool Execution] Fetching Mongo tasks (Status: {status}, Due Today: {due_today})..."
+        f"[Tool Execution] Fetching Mongo tasks (Status: {status}, When: {when}, Due Today: {due_today})..."
     )
 
     try:
@@ -126,6 +137,8 @@ def get_mongo_tasks(status: str = "TODO", due_today: bool = True) -> str:
         query = {}
         if status:
             query["status"] = status
+        if when:
+            query["when"] = when
 
         if due_today:
             today = datetime.datetime.now().replace(
@@ -191,8 +204,7 @@ def ask_agent(prompt: str) -> None:
 
     # Using gemini-flash-latest as it is confirmed to be available.
     response = client.models.generate_content(
-        # model="gemini-flash-latest",
-        model="gemini-2.5-flash-lite",
+        model="gemini-flash-latest",
         contents=full_prompt,
         config=config,
     )
@@ -202,4 +214,4 @@ def ask_agent(prompt: str) -> None:
 
 
 if __name__ == "__main__":
-    ask_agent("What tasks should I do today?")
+    ask_agent("What are my most important tasks today?")
