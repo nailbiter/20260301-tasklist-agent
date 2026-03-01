@@ -1,5 +1,9 @@
 import os
 import datetime
+import json
+import requests
+from requests.auth import HTTPBasicAuth
+from pymongo import MongoClient
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -11,38 +15,54 @@ load_dotenv()
 # Tool Definitions (These will be exposed to Gemini)
 # ---------------------------------------------------------------------------
 
-import json
-import requests
-from requests.auth import HTTPBasicAuth
-from pymongo import MongoClient
-
-def get_jira_tasks(assignee: str = "me", status: str = "To Do") -> str:
+def get_jira_tasks(assignee: str = "me", status: str = "To Do", is_current_sprint: bool = True) -> str:
     """
     Retrieves tasks from Jira based on assignee and status.
     
     Args:
         assignee: The person assigned to the task (default: "me").
         status: The current status of the task (e.g., "To Do", "In Progress", "Done").
+        is_current_sprint: If True, only returns tasks from the current active sprint.
     """
     jira_url = os.getenv("JIRA_URL")
-    jira_user = os.getenv("JIRA_USER")
+    jira_user = os.getenv("JIRA_USER") or os.getenv("JIRA_EMAIL")
     jira_api_token = os.getenv("JIRA_API_TOKEN")
+    board_id = os.getenv("JIRA_BOARD_ID")
 
     if not all([jira_url, jira_user, jira_api_token]):
-        return json.dumps({"error": "Jira environment variables are not fully configured."})
+        return json.dumps({"error": "Jira environment variables (URL, USER/EMAIL, TOKEN) are not fully configured."})
 
-    # Construct the JQL query
+    auth = HTTPBasicAuth(jira_user, jira_api_token)
+    headers = {"Accept": "application/json"}
+    
+    sprint_filter = ""
+    if is_current_sprint:
+        if not board_id:
+            print("[Warning] JIRA_BOARD_ID not set; skipping current sprint filter.")
+        else:
+            try:
+                sprint_url = f"{jira_url.rstrip('/')}/rest/agile/1.0/board/{board_id}/sprint"
+                sprint_params = {"state": "active"}
+                sprint_resp = requests.get(sprint_url, headers=headers, params=sprint_params, auth=auth)
+                sprint_resp.raise_for_status()
+                sprints = sprint_resp.json().get("values", [])
+                if sprints:
+                    sprint_id = sprints[0]["id"]
+                    sprint_filter = f" AND sprint = {sprint_id}"
+                    print(f"[Tool Execution] Found active sprint: {sprints[0].get('name')} (ID: {sprint_id})")
+                else:
+                    print(f"[Warning] No active sprints found for board {board_id}.")
+            except Exception as e:
+                print(f"[Warning] Failed to fetch sprints: {e}")
+
     assignee_query = "currentUser()" if assignee == "me" else f'"{assignee}"'
-    jql = f'assignee = {assignee_query} AND status = "{status}"'
+    jql = f'assignee = {assignee_query} AND status = "{status}"{sprint_filter}'
 
     print(f"[Tool Execution] Fetching Jira tasks for '{assignee}' with status '{status}' using JQL: {jql}...")
     
     try:
         url = f"{jira_url.rstrip('/')}/rest/api/3/search"
-        auth = HTTPBasicAuth(jira_user, jira_api_token)
-        headers = {"Accept": "application/json"}
         params = {"jql": jql, "maxResults": 10}
-
         response = requests.get(url, headers=headers, params=params, auth=auth)
         response.raise_for_status()
         
@@ -56,59 +76,62 @@ def get_jira_tasks(assignee: str = "me", status: str = "To Do") -> str:
                 "status": issue["fields"].get("status", {}).get("name"),
                 "url": f"{jira_url.rstrip('/')}/browse/{issue['key']}"
             })
-        
         return json.dumps(tasks)
-
     except Exception as e:
         return json.dumps({"error": f"Failed to fetch Jira tasks: {str(e)}"})
 
-def get_mongo_tasks(priority: str = "High", due_today: bool = True) -> str:
+def get_mongo_tasks(status: str = "TODO", when: str = None, due_today: bool = True) -> str:
     """
     Retrieves personal tasks from the custom MongoDB database.
     
     Args:
-        priority: The priority level of the task (e.g., "High", "Medium", "Low").
-        due_today: Boolean indicating if only tasks due today should be returned.
+        status: The status of the task (e.g., "TODO", "DONE", "REGULAR", "FAILED").
+        when: A temporal indicator (e.g., "WEEKEND", "EVENING", "PARTTIME").
+        due_today: Boolean indicating if only tasks due or scheduled for today should be returned.
     """
     mongo_uri = os.getenv("MONGO_URI")
-    mongo_db_name = os.getenv("MONGO_DB_NAME")
+    mongo_db_name = os.getenv("MONGO_DB_NAME") or "gstasks"
     
     if not mongo_uri:
         return json.dumps({"error": "MONGO_URI environment variable is not configured."})
 
-    print(f"[Tool Execution] Fetching Mongo tasks (Priority: {priority}, Due Today: {due_today})...")
+    print(f"[Tool Execution] Fetching Mongo tasks (Status: {status}, When: {when}, Due Today: {due_today})...")
     
     try:
         client = MongoClient(mongo_uri)
-        
-        # Determine database and collection
-        if mongo_db_name:
-            db = client[mongo_db_name]
-            collection = db["gstasks.tasks"]
-        else:
-            db = client["gstasks"]
-            collection = db["tasks"]
+        db = client[mongo_db_name]
+        collection = db["tasks"]
 
-        query = {"priority": priority}
+        query = {}
+        if status:
+            query["status"] = status
+        if when:
+            query["when"] = when
+            
         if due_today:
-            today_str = datetime.date.today().strftime("%Y-%m-%d")
-            # Support both string format and potentially datetime (though JQL-like agents often use strings)
-            # We'll stick to string for now as it's common in simple task stores
-            query["due"] = today_str
+            today = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            today_str = today.strftime("%Y-%m-%d")
+            date_query = {"$in": [today, today_str]}
+            query["$or"] = [
+                {"scheduled_date": date_query},
+                {"due": date_query}
+            ]
 
         cursor = collection.find(query).limit(20)
         tasks = []
         for doc in cursor:
-            # Convert ObjectId and datetime to string for JSON serialization
-            if "_id" in doc:
-                doc["_id"] = str(doc["_id"])
-            if "due" in doc and isinstance(doc["due"], datetime.datetime):
-                doc["due"] = doc["due"].strftime("%Y-%m-%d")
-            tasks.append(doc)
+            processed_doc = {}
+            for k, v in doc.items():
+                if k == "_id":
+                    processed_doc[k] = str(v)
+                elif isinstance(v, datetime.datetime):
+                    processed_doc[k] = v.isoformat()
+                else:
+                    processed_doc[k] = v
+            tasks.append(processed_doc)
         
         client.close()
         return json.dumps(tasks)
-
     except Exception as e:
         return json.dumps({"error": f"Failed to fetch Mongo tasks: {str(e)}"})
 
@@ -120,10 +143,14 @@ def ask_agent(prompt: str) -> None:
     """
     Main function to initialize the Gemini client, bind tools, and generate a response.
     """
-    # The SDK automatically picks up GEMINI_API_KEY from the environment
-    client = genai.Client()
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        print("Error: GEMINI_API_KEY not found in environment.")
+        return
     
-    # Read the system prompt from GEMINI.md
+    api_key = api_key.strip("'\"")
+    client = genai.Client(api_key=api_key)
+    
     try:
         with open("GEMINI.md", "r") as f:
             system_instruction = f.read()
@@ -133,19 +160,18 @@ def ask_agent(prompt: str) -> None:
     today = datetime.date.today().strftime("%Y-%m-%d")
     full_prompt = f"Today's date is {today}. User query: {prompt}"
 
-    # Configure the model to use our defined functions as tools
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
         tools=[get_jira_tasks, get_mongo_tasks],
-        temperature=0.2, # Low temperature for factual task retrieval
+        temperature=0.2,
     )
 
     print(f"User: {prompt}\n")
     print("Agent is thinking...\n---")
     
-    # Using gemini-2.0-flash as it excels at complex tool calling and reasoning
+    # Using gemini-flash-latest as it is confirmed to be available.
     response = client.models.generate_content(
-        model='gemini-2.0-flash',
+        model='gemini-flash-latest',
         contents=full_prompt,
         config=config,
     )
@@ -154,5 +180,4 @@ def ask_agent(prompt: str) -> None:
     print(response.text)
 
 if __name__ == "__main__":
-    # Fallback for direct execution testing
     ask_agent("What are my most important tasks today?")
