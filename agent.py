@@ -113,15 +113,14 @@ def get_jira_tasks(
 
 
 def get_mongo_tasks(
-    status: str = "TODO", when: str = None, due_today: bool = True
+    # status: str = "TODO", when: str = None, due_today: bool = True
+    is_timely: bool = True,
 ) -> str:
     """
     Retrieves personal tasks from the custom MongoDB database.
 
     Args:
-        status: The status of the task (e.g., "TODO", "DONE", "REGULAR", "FAILED").
-        when: A temporal indicator (e.g., "WEEKEND", "EVENING", "PARTTIME").
-        due_today: Boolean indicating if only tasks due or scheduled for today should be returned.
+    is_timely: whether the task is timely or not
     """
     mongo_uri = os.getenv("MONGO_URI")
     mongo_db_name = os.getenv("MONGO_DB_NAME") or "gstasks"
@@ -132,8 +131,10 @@ def get_mongo_tasks(
         )
 
     print(
-        f"[Tool Execution] Fetching Mongo tasks (Status: {status}, When: {when}, Due Today: {due_today})..."
+        f"[Tool Execution] Fetching Mongo tasks ({dict(is_timely=is_timely)})..."
     )
+
+    logger = get_configured_logger("get_mongo_tasks", level="DEBUG")
 
     try:
         client = MongoClient(mongo_uri)
@@ -141,18 +142,19 @@ def get_mongo_tasks(
         collection = db["tasks"]
 
         query = {}
-        if status:
-            query["status"] = status
-        if when:
-            query["when"] = when
+        query = {"scheduled_date": {"$gt": datetime.datetime(2026, 2, 27)}}
+        # if status:
+        #     query["status"] = status
+        # if when:
+        #     query["when"] = when
 
-        if due_today:
-            today = datetime.datetime.now().replace(
-                hour=0, minute=0, second=0, microsecond=0
-            )
-            today_str = today.strftime("%Y-%m-%d")
-            date_query = {"$in": [today, today_str]}
-            query["$or"] = [{"scheduled_date": date_query}, {"due": date_query}]
+        # if due_today:
+        #     today = datetime.datetime.now().replace(
+        #         hour=0, minute=0, second=0, microsecond=0
+        #     )
+        #     today_str = today.strftime("%Y-%m-%d")
+        #     date_query = {"$in": [today, today_str]}
+        #     query["$or"] = [{"scheduled_date": date_query}, {"due": date_query}]
 
         cursor = collection.find(query).limit(20)
         tasks = []
@@ -170,6 +172,7 @@ def get_mongo_tasks(
         client.close()
         return json.dumps(tasks)
     except Exception as e:
+        logger.error(e)
         return json.dumps({"error": f"Failed to fetch Mongo tasks: {str(e)}"})
 
 
@@ -210,7 +213,7 @@ def ask_agent(prompt: str) -> None:
 
     # Using gemini-flash-latest as it is confirmed to be available.
     response = client.models.generate_content(
-        model="gemini-flash-latest",
+        model="gemini-2.5-flash-lite",
         contents=full_prompt,
         config=config,
     )
