@@ -7,10 +7,85 @@ import json
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from google.cloud import firestore
 from utils import get_configured_logger
 
 # Load environment variables
 load_dotenv()
+
+# Initialize Firestore
+db = firestore.Client(project=os.getenv("GOOGLE_CLOUD_PROJECT"))
+
+# ---------------------------------------------------------------------------
+# Session Management (Firestore)
+# ---------------------------------------------------------------------------
+
+
+def load_chat_history(session_id: str) -> list:
+    """Loads the conversation history for a given session from Firestore."""
+    doc_ref = db.collection("mail_sessions").document(session_id)
+    doc = doc_ref.get()
+    if doc.exists:
+        # Firestore returns dicts, we need to convert them back to types.Content
+        history_data = doc.to_dict().get("history", [])
+        contents = []
+        for content_dict in history_data:
+            parts = []
+            for part_dict in content_dict.get("parts", []):
+                if "text" in part_dict:
+                    parts.append(types.Part.from_text(text=part_dict["text"]))
+                elif "function_call" in part_dict:
+                    fc = part_dict["function_call"]
+                    parts.append(
+                        types.Part(
+                            function_call=types.FunctionCall(
+                                name=fc["name"], args=fc["args"]
+                            )
+                        )
+                    )
+                elif "function_response" in part_dict:
+                    fr = part_dict["function_response"]
+                    parts.append(
+                        types.Part.from_function_response(
+                            name=fr["name"], response=fr["response"]
+                        )
+                    )
+            contents.append(types.Content(role=content_dict["role"], parts=parts))
+        return contents
+    return []
+
+
+def save_chat_history(session_id: str, contents: list):
+    """Saves the conversation history to Firestore."""
+    history_data = []
+    for content in contents:
+        parts_data = []
+        for part in content.parts:
+            if part.text:
+                parts_data.append({"text": part.text})
+            elif part.function_call:
+                parts_data.append(
+                    {
+                        "function_call": {
+                            "name": part.function_call.name,
+                            "args": part.function_call.args,
+                        }
+                    }
+                )
+            elif part.function_response:
+                parts_data.append(
+                    {
+                        "function_response": {
+                            "name": part.function_response.name,
+                            "response": part.function_response.response,
+                        }
+                    }
+                )
+        history_data.append({"role": content.role, "parts": parts_data})
+
+    doc_ref = db.collection("mail_sessions").document(session_id)
+    doc_ref.set({"history": history_data, "updated_at": firestore.SERVER_TIMESTAMP})
+
 
 # ---------------------------------------------------------------------------
 # Tool Definitions (These will be exposed to Gemini)
@@ -157,9 +232,10 @@ logger = get_configured_logger("agent-mailmaster", level="INFO")
 request_count = 0
 
 
-def ask_agent(prompt: str) -> None:
+def ask_agent(prompt: str, session_id: str = "default_session") -> None:
     """
     Main function to initialize the Gemini client, bind tools, and generate a response.
+    Loads and saves conversation history to/from Firestore for session persistence.
     """
     global request_count
     api_key = os.getenv("GEMINI_API_KEY")
@@ -177,7 +253,12 @@ def ask_agent(prompt: str) -> None:
         system_instruction = "You are a helpful email-management assistant."
 
     today = datetime.date.today().strftime("%Y-%m-%d")
-    contents = [
+
+    # 1. Load existing session history
+    contents = load_chat_history(session_id)
+
+    # 2. Add current user prompt
+    contents.append(
         types.Content(
             role="user",
             parts=[
@@ -186,11 +267,15 @@ def ask_agent(prompt: str) -> None:
                 )
             ],
         )
-    ]
+    )
 
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
-        tools=[read_recent_emails, mark_as_read, label_emails],
+        tools=[
+            read_recent_emails,
+            mark_as_read,
+            label_emails,
+        ],
         temperature=0.2,
     )
 
@@ -245,9 +330,19 @@ def ask_agent(prompt: str) -> None:
         # Add tool results to the conversation history
         contents.append(types.Content(role="user", parts=tool_responses))
 
+    # 3. Save the updated history back to Firestore
+    save_chat_history(session_id, contents)
+
     print("---\nResponse:")
     print(response.text)
 
 
 if __name__ == "__main__":
-    ask_agent("Read my recent emails and tell me if there's anything urgent.")
+    import sys
+
+    user_prompt = "Read my recent emails and tell me if there's anything urgent."
+    if len(sys.argv) > 1:
+        user_prompt = " ".join(sys.argv[1:])
+
+    # For manual testing, you can use a fixed session ID
+    ask_agent(user_prompt, session_id="test_session_123")
