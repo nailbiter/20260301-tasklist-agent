@@ -4,6 +4,7 @@ from email.header import decode_header
 import datetime
 import os
 import json
+import uuid
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -232,16 +233,29 @@ logger = get_configured_logger("agent-mailmaster", level="INFO")
 request_count = 0
 
 
-def ask_agent(prompt: str, session_id: str = "default_session") -> None:
+def ask_agent(prompt: str, session_id: str = None) -> str:
     """
     Main function to initialize the Gemini client, bind tools, and generate a response.
     Loads and saves conversation history to/from Firestore for session persistence.
+
+    Args:
+        prompt: The user query.
+        session_id: A unique ID for the session. If None, a new UUID is generated.
+
+    Returns:
+        The session_id used for this interaction.
     """
     global request_count
+    if session_id is None:
+        session_id = str(uuid.uuid4())
+        print(f"[New Session Created] Session ID: {session_id}")
+    else:
+        print(f"[Existing Session] Session ID: {session_id}")
+
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         print("Error: GEMINI_API_KEY not found in environment.")
-        return
+        return session_id
 
     api_key = api_key.strip("'\"")
     client = genai.Client(api_key=api_key)
@@ -335,14 +349,20 @@ def ask_agent(prompt: str, session_id: str = "default_session") -> None:
 
     print("---\nResponse:")
     print(response.text)
+    return session_id
 
 
 if __name__ == "__main__":
     import sys
 
+    # To test switching: 
+    #   python agent-mailmaster.py "Prompt" "optional_uuid"
     user_prompt = "Read my recent emails and tell me if there's anything urgent."
-    if len(sys.argv) > 1:
-        user_prompt = " ".join(sys.argv[1:])
+    provided_session_id = None
 
-    # For manual testing, you can use a fixed session ID
-    ask_agent(user_prompt, session_id="test_session_123")
+    if len(sys.argv) > 1:
+        user_prompt = sys.argv[1]
+    if len(sys.argv) > 2:
+        provided_session_id = sys.argv[2]
+
+    ask_agent(user_prompt, session_id=provided_session_id)
