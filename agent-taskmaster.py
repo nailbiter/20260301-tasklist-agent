@@ -180,11 +180,15 @@ def get_mongo_tasks(
 # Agent Setup & Execution
 # ---------------------------------------------------------------------------
 
+logger = get_configured_logger("agent", level="INFO")
+request_count = 0
+
 
 def ask_agent(prompt: str) -> None:
     """
     Main function to initialize the Gemini client, bind tools, and generate a response.
     """
+    global request_count
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         print("Error: GEMINI_API_KEY not found in environment.")
@@ -200,7 +204,7 @@ def ask_agent(prompt: str) -> None:
         system_instruction = "You are a helpful task-management assistant."
 
     today = datetime.date.today().strftime("%Y-%m-%d")
-    full_prompt = f"Today's date is {today}. User query: {prompt}"
+    contents = [types.Content(role="user", parts=[types.Part.from_text(text=f"Today's date is {today}. User query: {prompt}")])]
 
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
@@ -211,12 +215,52 @@ def ask_agent(prompt: str) -> None:
     print(f"User: {prompt}\n")
     print("Agent is thinking...\n---")
 
-    # Using gemini-flash-latest as it is confirmed to be available.
-    response = client.models.generate_content(
-        model="gemini-2.5-flash-lite",
-        contents=full_prompt,
-        config=config,
-    )
+    while True:
+        request_count += 1
+        logger.info(f"Making request #{request_count} to model...")
+        
+        response = client.models.generate_content(
+            model="gemini-2.5-flash-lite",
+            contents=contents,
+            config=config,
+        )
+        
+        # Add the model's response to the conversation history
+        contents.append(response.candidates[0].content)
+
+        # Check if there are any tool calls
+        tool_calls = [
+            part.function_call 
+            for part in response.candidates[0].content.parts 
+            if part.function_call
+        ]
+
+        if not tool_calls:
+            break
+
+        # Process each tool call
+        tool_responses = []
+        for tool_call in tool_calls:
+            function_name = tool_call.name
+            args = tool_call.args
+            
+            # Dispatch to the correct function
+            if function_name == "get_jira_tasks":
+                result = get_jira_tasks(**args)
+            elif function_name == "get_mongo_tasks":
+                result = get_mongo_tasks(**args)
+            else:
+                result = json.dumps({"error": f"Unknown tool: {function_name}"})
+            
+            tool_responses.append(
+                types.Part.from_function_response(
+                    name=function_name,
+                    response={"result": result}
+                )
+            )
+        
+        # Add tool results to the conversation history
+        contents.append(types.Content(role="user", parts=tool_responses))
 
     print("---\nResponse:")
     print(response.text)
