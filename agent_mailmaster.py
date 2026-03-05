@@ -106,15 +106,18 @@ def get_imap_client():
     return mail
 
 
-def read_recent_emails(folder: str = "INBOX") -> str:
+def read_recent_emails(folder: str = "INBOX", unread_from: str = None) -> str:
     """
-    Retrieves unread emails from the mailbox starting from yesterday 0am.
+    Retrieves unread emails from the mailbox starting from yesterday 0am [default] or predefined start period.
 
     Args:
         folder: The mailbox folder to read from (default: "INBOX").
+        unread_from: date in "%Y-%m-%d" from which to start load unread emails (default = yesterday)
     """
     logger = get_configured_logger("read_recent_emails", level="DEBUG")
-    print(f"[Tool Execution] Reading recent emails from {folder}...")
+    print(
+        f"[Tool Execution] Reading recent emails from {dict(folder=folder,unread_from=unread_from)}..."
+    )
 
     try:
         mail = get_imap_client()
@@ -122,9 +125,14 @@ def read_recent_emails(folder: str = "INBOX") -> str:
 
         # Yesterday's date for SINCE (format: 01-Jan-2023)
         yesterday = datetime.date.today() - datetime.timedelta(days=1)
-        since_date = yesterday.strftime("%d-%b-%Y")
+        since_date = (
+            yesterday
+            if unread_from is None
+            else datetime.datetime.strptime(unread_from, "%Y-%m-%d")
+        ).strftime("%d-%b-%Y")
 
         # Search for unread emails since yesterday
+        ## FIXME: which timezone is this?
         status, data = mail.uid("search", None, f'(UNSEEN SINCE "{since_date}")')
         if status != "OK":
             return json.dumps({"error": f"Search failed: {status}"})
@@ -355,7 +363,7 @@ def ask_agent(prompt: str, session_id: str = None) -> str:
 if __name__ == "__main__":
     import sys
 
-    # To test switching: 
+    # To test switching:
     #   python agent-mailmaster.py "Prompt" "optional_uuid"
     user_prompt = "Read my recent emails and tell me if there's anything urgent."
     provided_session_id = None
