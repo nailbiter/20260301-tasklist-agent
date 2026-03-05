@@ -130,9 +130,7 @@ def get_mongo_tasks(
             {"error": "MONGO_URI environment variable is not configured."}
         )
 
-    print(
-        f"[Tool Execution] Fetching Mongo tasks ({dict(is_timely=is_timely)})..."
-    )
+    print(f"[Tool Execution] Fetching Mongo tasks ({dict(is_timely=is_timely)})...")
 
     logger = get_configured_logger("get_mongo_tasks", level="DEBUG")
 
@@ -195,7 +193,10 @@ def ask_agent(prompt: str) -> None:
         return
 
     api_key = api_key.strip("'\"")
-    client = genai.Client(api_key=api_key)
+    client = genai.Client(
+        api_key=api_key,
+        project=os.environ["GENAI_GOOGLE_CLOUD_PROJECT"],
+    )
 
     try:
         with open("system_message.md", "r") as f:
@@ -204,7 +205,16 @@ def ask_agent(prompt: str) -> None:
         system_instruction = "You are a helpful task-management assistant."
 
     today = datetime.date.today().strftime("%Y-%m-%d")
-    contents = [types.Content(role="user", parts=[types.Part.from_text(text=f"Today's date is {today}. User query: {prompt}")])]
+    contents = [
+        types.Content(
+            role="user",
+            parts=[
+                types.Part.from_text(
+                    text=f"Today's date is {today}. User query: {prompt}"
+                )
+            ],
+        )
+    ]
 
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
@@ -218,20 +228,20 @@ def ask_agent(prompt: str) -> None:
     while True:
         request_count += 1
         logger.info(f"Making request #{request_count} to model...")
-        
+
         response = client.models.generate_content(
             model="gemini-2.5-flash-lite",
             contents=contents,
             config=config,
         )
-        
+
         # Add the model's response to the conversation history
         contents.append(response.candidates[0].content)
 
         # Check if there are any tool calls
         tool_calls = [
-            part.function_call 
-            for part in response.candidates[0].content.parts 
+            part.function_call
+            for part in response.candidates[0].content.parts
             if part.function_call
         ]
 
@@ -243,7 +253,7 @@ def ask_agent(prompt: str) -> None:
         for tool_call in tool_calls:
             function_name = tool_call.name
             args = tool_call.args
-            
+
             # Dispatch to the correct function
             if function_name == "get_jira_tasks":
                 result = get_jira_tasks(**args)
@@ -251,14 +261,13 @@ def ask_agent(prompt: str) -> None:
                 result = get_mongo_tasks(**args)
             else:
                 result = json.dumps({"error": f"Unknown tool: {function_name}"})
-            
+
             tool_responses.append(
                 types.Part.from_function_response(
-                    name=function_name,
-                    response={"result": result}
+                    name=function_name, response={"result": result}
                 )
             )
-        
+
         # Add tool results to the conversation history
         contents.append(types.Content(role="user", parts=tool_responses))
 
