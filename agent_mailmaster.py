@@ -266,7 +266,10 @@ def ask_agent(prompt: str, session_id: str = None) -> str:
         return session_id
 
     api_key = api_key.strip("'\"")
-    client = genai.Client(api_key=api_key)
+    client = genai.Client(
+        api_key=api_key,
+        project=os.environ["GENAI_GOOGLE_CLOUD_PROJECT"],
+    )
 
     try:
         with open("system_message_mail.md", "r") as f:
