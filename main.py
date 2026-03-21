@@ -3,19 +3,19 @@ import hmac
 import hashlib
 import time
 import sys
+import threading
 from flask import Flask, request, jsonify
 import requests
 from dotenv import load_dotenv
 
-# Assuming your local 'common' module is available in the PYTHONPATH
+# Assuming your common logging is in the PYTHONPATH
 from common.logging import get_configured_logger
 
-# Load .env file for local development
+# Load .env for local development (ignored in Docker/Cloud Run)
 load_dotenv()
 
 app = Flask(__name__)
-logger = get_configured_logger("main")
-
+logger = get_configured_logger("slack_gateway")
 
 def get_env_or_fail(var_name):
     value = os.environ.get(var_name)
@@ -24,95 +24,98 @@ def get_env_or_fail(var_name):
         sys.exit(1)
     return value
 
-
-# Validate config on startup
+# Configuration
 SLACK_SIGNING_SECRET = get_env_or_fail("SLACK_SIGNING_SECRET")
 SLACK_BOT_TOKEN = get_env_or_fail("SLACK_BOT_TOKEN")
 TARGET_CHANNEL_ID = get_env_or_fail("TARGET_CHANNEL_ID")
 
-
 def verify_slack_signature(headers, body):
     timestamp = headers.get("X-Slack-Request-Timestamp")
     signature = headers.get("X-Slack-Signature")
-
+    
     if not timestamp or not signature:
-        logger.warning("Missing Slack signature headers.")
         return False
-
-    # Check for replay attacks
     if abs(time.time() - int(timestamp)) > 60 * 5:
-        logger.warning("Slack request timestamp is too old.")
         return False
 
     sig_basestring = f"v0:{timestamp}:{body.decode('utf-8')}"
-    my_sig = (
-        "v0="
-        + hmac.new(
-            bytes(SLACK_SIGNING_SECRET, "utf-8"),
-            bytes(sig_basestring, "utf-8"),
-            hashlib.sha256,
-        ).hexdigest()
-    )
+    my_sig = "v0=" + hmac.new(
+        bytes(SLACK_SIGNING_SECRET, "utf-8"),
+        bytes(sig_basestring, "utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    
+    return hmac.compare_digest(my_sig, signature)
 
-    is_valid = hmac.compare_digest(my_sig, signature)
-    if not is_valid:
-        logger.error("Signature verification failed.")
-    return is_valid
+def process_event(event):
+    """
+    Background worker to handle LLM logic and respond to Slack.
+    This bypasses the 3-second timeout.
+    """
+    user_text = event.get("text", "")
+    channel = event.get("channel")
+    user_id = event.get("user")
 
+    logger.info(f"Background processing for user {user_id}: {user_text}")
+
+    # --- INTEGRATION POINT ---
+    # This is where you will eventually call your agent logic:
+    # from agent_taskmaster import run_agent_query
+    # ai_response = run_agent_query(user_text)
+    
+    # For now, we keep the "hi" logic but move it here
+    if "hi" in user_text.lower():
+        response_text = f"Hello <@{user_id}>! I'm your Taskmaster agent. How can I help with Jira or MongoDB today?"
+    else:
+        response_text = f"I received: '{user_text}'. (Agent logic not yet connected)"
+
+    # Post the result back to Slack via chat.postMessage
+    try:
+        requests.post(
+            "https://slack.com/api/chat.postMessage",
+            headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+            json={
+                "channel": channel,
+                "text": response_text
+            },
+            timeout=10
+        )
+    except Exception as e:
+        logger.error(f"Failed to post message to Slack: {e}")
 
 @app.route("/slack/ingress", methods=["POST"])
 def slack_ingress():
     raw_data = request.get_data()
     data = request.json
 
-    # 1. URL Verification Handshake
-    # We do this BEFORE the signature check to ensure the Slack App Dashboard
-    # can always verify the endpoint during initial setup.
+    # 1. URL Verification (Handshake)
     if data and data.get("type") == "url_verification":
-        logger.info("Handling Slack URL verification challenge.")
         return jsonify({"challenge": data.get("challenge")})
 
     # 2. Signature Verification
     if not verify_slack_signature(request.headers, raw_data):
+        logger.warning("Unauthorized request attempted.")
         return "Unauthorized", 403
 
-    # 3. Event Processing
+    # 3. Event Handling
     event = data.get("event", {})
-
-    # Log every event received for debugging
-    logger.info(
-        f"Received event: {event.get('type')} in channel: {event.get('channel')}"
-    )
-
-    # Check for:
-    # - Standard 'message' type
-    # - Correct Channel ID (filtered in code)
-    # - Not a bot message (prevents infinite loops)
+    
+    # Filter for valid messages in the target channel, excluding bots
     if (
         event.get("type") == "message"
         and event.get("channel") == TARGET_CHANNEL_ID
         and "bot_id" not in event
-        and event.get("subtype") is None  # Ignore edits, joins, etc.
+        and event.get("subtype") is None
     ):
-        user_text = event.get("text", "").strip().lower()
-        logger.info(
-            f"Processing message: '{user_text}' from channel {event.get('channel')}"
-        )
-
-        if user_text == "hi":
-            logger.info("Triggering 'hi' response.")
-            resp = requests.post(
-                "https://slack.com/api/chat.postMessage",
-                headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
-                json={"channel": TARGET_CHANNEL_ID, "text": "you typed 'hi'"},
-            )
-            if not resp.json().get("ok"):
-                logger.error(f"Slack API Error: {resp.json().get('error')}")
+        # Dispatch to background thread to avoid Slack's 3s timeout
+        worker = threading.Thread(target=process_event, args=(event,))
+        worker.start()
+        
+        # Acknowledge receipt to Slack immediately
+        return "OK", 200
 
     return "OK", 200
 
-
 if __name__ == "__main__":
-    # Cloud Run provides the PORT environment variable
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
