@@ -41,4 +41,7 @@ Note that tasks might be slightly paraphrased.
 
 1. determine today's date
 2. fetch personal tasks using the `get_mongo_tasks` tool with `before` argument set to today's date
-3. format the tasks returned
+3. sort tasks in order of decreasing importance. Make your best guess based only to task's name. 
+   * note that tasks with NIW or #niw in their name are usually of higher importance
+   * Do not ask for any questions at this point. If unsure, just sort in alphabetic order
+4. format the tasks as a numbered list in order of decreasing importance (i.e. 1. should be the most important task)
