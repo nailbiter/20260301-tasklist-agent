@@ -17,6 +17,8 @@ load_dotenv()
 # Initialize Firestore
 db = firestore.Client(project=os.getenv("GOOGLE_CLOUD_PROJECT"))
 
+LOG_FILE = f""".logs/{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}.log.txt"""
+
 # ---------------------------------------------------------------------------
 # Session Management (Firestore)
 # ---------------------------------------------------------------------------
@@ -106,7 +108,9 @@ def get_jira_tasks(
         status: The current status of the task (e.g., "To Do", "In Progress", "Done").
         is_current_sprint: If True, only returns tasks from the current active sprint.
     """
-    logger = get_configured_logger("get_jira_tasks", level="DEBUG")
+    logger = get_configured_logger(
+        "get_jira_tasks", level="INFO", log_to_file=LOG_FILE, file_mode="a"
+    )
 
     jira_url = os.getenv("JIRA_URL")
     jira_user = os.getenv("JIRA_USER") or os.getenv("JIRA_EMAIL")
@@ -210,7 +214,10 @@ def get_mongo_tasks(
 
     print(f"[Tool Execution] Fetching Mongo tasks ({dict(is_timely=is_timely)})...")
 
-    logger = get_configured_logger("get_mongo_tasks", level="DEBUG")
+    logger = get_configured_logger(
+        "get_mongo_tasks", level="INFO", log_to_file=LOG_FILE, file_mode="a"
+    )
+    logger.debug("hi")
 
     try:
         client = MongoClient(mongo_uri)
@@ -232,7 +239,8 @@ def get_mongo_tasks(
         #     date_query = {"$in": [today, today_str]}
         #     query["$or"] = [{"scheduled_date": date_query}, {"due": date_query}]
 
-        cursor = collection.find(query).limit(20)
+        # cursor = collection.find(query).limit(20)
+        cursor = collection.find(query)
         tasks = []
         for doc in cursor:
             processed_doc = {}
@@ -246,6 +254,8 @@ def get_mongo_tasks(
             tasks.append(processed_doc)
 
         client.close()
+        logger.debug(len(tasks))
+        logger.debug(tasks)
         return json.dumps(tasks)
     except Exception as e:
         logger.error(e)
@@ -272,11 +282,15 @@ def ask_agent(prompt: str, session_id: str = None) -> str:
     Returns:
         The session_id used for this interaction.
     """
+    logger = get_configured_logger(
+        "ask_agent", level="INFO", log_to_file=LOG_FILE, file_mode="a"
+    )
+
     global request_count
 
     if session_id is None:
         session_id = f"task_{uuid.uuid4()}"
-        print(f"[New Session Created] Session ID: {session_id}")
+        logger.info(f"[New Session Created] Session ID: {session_id}")
     else:
         if not session_id.startswith("task_"):
             session_id = f"task_{session_id}"
@@ -290,7 +304,6 @@ def ask_agent(prompt: str, session_id: str = None) -> str:
     api_key = api_key.strip("'\"")
     client = genai.Client(
         api_key=api_key,
-        project=os.environ["GENAI_GOOGLE_CLOUD_PROJECT"],
     )
 
     try:
