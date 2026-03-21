@@ -9,13 +9,14 @@ import requests
 from dotenv import load_dotenv
 
 # Assuming your common logging is in the PYTHONPATH
-from common.logging import get_configured_logger
+from utils import get_configured_logger
 
 # Load .env for local development (ignored in Docker/Cloud Run)
 load_dotenv()
 
 app = Flask(__name__)
 logger = get_configured_logger("slack_gateway")
+
 
 def get_env_or_fail(var_name):
     value = os.environ.get(var_name)
@@ -24,28 +25,34 @@ def get_env_or_fail(var_name):
         sys.exit(1)
     return value
 
+
 # Configuration
 SLACK_SIGNING_SECRET = get_env_or_fail("SLACK_SIGNING_SECRET")
 SLACK_BOT_TOKEN = get_env_or_fail("SLACK_BOT_TOKEN")
 TARGET_CHANNEL_ID = get_env_or_fail("TARGET_CHANNEL_ID")
 
+
 def verify_slack_signature(headers, body):
     timestamp = headers.get("X-Slack-Request-Timestamp")
     signature = headers.get("X-Slack-Signature")
-    
+
     if not timestamp or not signature:
         return False
     if abs(time.time() - int(timestamp)) > 60 * 5:
         return False
 
     sig_basestring = f"v0:{timestamp}:{body.decode('utf-8')}"
-    my_sig = "v0=" + hmac.new(
-        bytes(SLACK_SIGNING_SECRET, "utf-8"),
-        bytes(sig_basestring, "utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-    
+    my_sig = (
+        "v0="
+        + hmac.new(
+            bytes(SLACK_SIGNING_SECRET, "utf-8"),
+            bytes(sig_basestring, "utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+    )
+
     return hmac.compare_digest(my_sig, signature)
+
 
 def process_event(event):
     """
@@ -62,7 +69,7 @@ def process_event(event):
     # This is where you will eventually call your agent logic:
     # from agent_taskmaster import run_agent_query
     # ai_response = run_agent_query(user_text)
-    
+
     # For now, we keep the "hi" logic but move it here
     if "hi" in user_text.lower():
         response_text = f"Hello <@{user_id}>! I'm your Taskmaster agent. How can I help with Jira or MongoDB today?"
@@ -74,14 +81,12 @@ def process_event(event):
         requests.post(
             "https://slack.com/api/chat.postMessage",
             headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
-            json={
-                "channel": channel,
-                "text": response_text
-            },
-            timeout=10
+            json={"channel": channel, "text": response_text},
+            timeout=10,
         )
     except Exception as e:
         logger.error(f"Failed to post message to Slack: {e}")
+
 
 @app.route("/slack/ingress", methods=["POST"])
 def slack_ingress():
@@ -99,7 +104,7 @@ def slack_ingress():
 
     # 3. Event Handling
     event = data.get("event", {})
-    
+
     # Filter for valid messages in the target channel, excluding bots
     if (
         event.get("type") == "message"
@@ -110,11 +115,12 @@ def slack_ingress():
         # Dispatch to background thread to avoid Slack's 3s timeout
         worker = threading.Thread(target=process_event, args=(event,))
         worker.start()
-        
+
         # Acknowledge receipt to Slack immediately
         return "OK", 200
 
     return "OK", 200
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
