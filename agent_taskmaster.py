@@ -3,7 +3,7 @@ import datetime
 import json
 import requests
 from requests.auth import HTTPBasicAuth
-from pymongo import MongoClient
+from pymongo import MongoClient, DESCENDING
 import uuid
 from google.cloud import firestore
 from dotenv import load_dotenv
@@ -279,6 +279,27 @@ logger = get_configured_logger("agent", level="INFO")
 request_count = 0
 
 
+def make_new_session_or_fetch_existing(prefix: str, is_make_new: bool = True) -> str:
+    logger = get_configured_logger(
+        "make_new_session", level="INFO", log_to_file=LOG_FILE, file_mode="a"
+    )
+
+    client = MongoClient(os.environ["FOR_METADATA_MONGO_URI"])
+    coll = client["logistics"]["20260321-agent-firestore-sessions"]
+
+    if is_make_new:
+        session_id = f"{prefix}_{uuid.uuid4()}"
+        coll.insert_one(
+            dict(session_id=session_id, prefix=prefix, dt=datetime.datetime.now())
+        )
+        logger.info(f"[New Session Created] Session ID: {session_id}")
+    else:
+        r = coll.find_one({"prefix": prefix}, sort=[("dt", DESCENDING)])
+        session_id = r["session_id"]
+        logger.info(f"fetching most recent session `{session_id}`")
+    return session_id
+
+
 def ask_agent(prompt: str, session_id: str = None) -> str:
     """
     Main function to initialize the Gemini client, bind tools, and generate a response.
@@ -298,8 +319,7 @@ def ask_agent(prompt: str, session_id: str = None) -> str:
     global request_count
 
     if session_id is None:
-        session_id = f"task_{uuid.uuid4()}"
-        logger.info(f"[New Session Created] Session ID: {session_id}")
+        session_id = make_new_session_or_fetch_existing(prefix="task")
     else:
         if not session_id.startswith("task_"):
             session_id = f"task_{session_id}"

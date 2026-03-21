@@ -34,6 +34,16 @@ def agent_cli():
 
 
 @agent_cli.command()
+@click.option("-P", "--prefix", type=click.Choice(["task"]), required=True)
+def sessions(prefix):
+    click.echo(
+        agent_taskmaster.make_new_session_or_fetch_existing(
+            is_make_new=False, prefix=prefix
+        )
+    )
+
+
+@agent_cli.command()
 @click.option("-p", "--prompt", type=str, required=True)
 @click.option("-S", "--session-id", type=str)
 def taskmaster(prompt, session_id):
