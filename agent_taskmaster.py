@@ -335,11 +335,29 @@ def ask_agent(prompt: str, session_id: str = None) -> str:
         api_key=api_key,
     )
 
-    try:
-        with open("system_message_taskmaster.md", "r") as f:
-            system_instruction = f.read()
-    except FileNotFoundError:
-        system_instruction = "You are a helpful task-management assistant."
+    # --- Fetch System Instruction (DB with local fallback) ---
+    system_instruction = None
+    mongo_uri = os.getenv("MONGO_URI")
+    if mongo_uri:
+        try:
+            m_client = MongoClient(mongo_uri)
+            db_mongo = m_client["logistics"]
+            config_doc = db_mongo["agent_configs"].find_one({"agent_id": "taskmaster"})
+            if config_doc and "system_instruction" in config_doc:
+                system_instruction = config_doc["system_instruction"]
+                print("[Info] Loaded system instruction from MongoDB.")
+            m_client.close()
+        except Exception as e:
+            print(f"[Warning] Failed to fetch system instruction from Mongo: {e}")
+
+    if not system_instruction:
+        try:
+            with open("system_message_taskmaster.md", "r") as f:
+                system_instruction = f.read()
+                print("[Info] Loaded system instruction from local file.")
+        except FileNotFoundError:
+            system_instruction = "You are a helpful task-management assistant."
+            print("[Warning] System instruction file not found. Using default.")
 
     today = datetime.date.today().strftime("%Y-%m-%d")
 
@@ -418,7 +436,7 @@ def ask_agent(prompt: str, session_id: str = None) -> str:
 
     print("---\nResponse:")
     print(response.text)
-    return session_id
+    return session_id, response.text
 
 
 if __name__ == "__main__":
@@ -432,4 +450,4 @@ if __name__ == "__main__":
     if len(sys.argv) > 2:
         provided_session_id = sys.argv[2]
 
-    ask_agent(user_prompt, session_id=provided_session_id)
+    session_id, response_text = ask_agent(user_prompt, session_id=provided_session_id)
