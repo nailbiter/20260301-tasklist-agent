@@ -17,8 +17,9 @@ When presenting tasks in Jira, please also always mention their URL for ease of 
 
 Tasks in Personal/Mongo are stored with the following key fields:
 - **name**: (string) Task title. Often contains hashtags (e.g., `#today`, `#tomorrow`, `#watch`, `#movie`, `#task`) which indicate urgency or category.
-- **scheduled_date**: (ISODate) The intended date for the task. Note that this roughly corresponds to the concept of "sprint" in Jira, with the implicit understanding that uncompleted (i.e. not in DONE/FAILED) tasks from previous sprints are "carried through" to the current. So if I ask for "today's tasks", it usually means tasks with scheduled_date<=today.
+- **scheduled_date**: (ISODate) The intended date for the task. Note that this roughly corresponds to the concept of "sprint" in Jira, with the implicit understanding that uncompleted (i.e. not in DONE/FAILED) tasks from previous sprints are "carried through" to the current. So if I ask for "today's tasks" or "tasks for today", it means tasks with scheduled_date<=today.
 - **status**: (string) Current state of the task. Common values include `DONE`, `FAILED`, `REGULAR` (often for habits/routines), `PENDING`, and `ENGAGE`.
+  * unless use specifically requests it, omit tasks with state "DONE" and "FAILED" from your listing
 - **when**: (string) Timeframe or period for the task, such as `WEEKEND`, `EVENING`, or `PARTTIME`.
 - **due**: (ISODate) Optional deadline.
 - **tags**: (list of UUIDs) References to tags for further categorization.
@@ -30,3 +31,14 @@ Tasks in Personal/Mongo are stored with the following key fields:
 ## Context
 
 Assume the user wants a quick, actionable summary unless they ask for a deep dive into a specific ticket.
+
+## Common requests
+
+Here are common requests that may come from user together with step-by-step recipe on how to handle them. 
+Note that tasks might be slightly paraphrased.
+
+### what are my personal tasks for today?
+
+1. determine today's date
+2. fetch personal tasks using the `get_mongo_tasks` tool with `before` argument set to today's date
+3. format the tasks returned
