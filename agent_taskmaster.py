@@ -16,7 +16,7 @@ import typing
 load_dotenv()
 
 # Initialize Firestore
-db = firestore.Client(project=os.getenv("GOOGLE_CLOUD_PROJECT"))
+db = firestore.Client()
 
 LOG_FILE = f""".logs/{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}.log.txt"""
 
@@ -340,9 +340,11 @@ def ask_agent(prompt: str, session_id: str = None) -> str:
     mongo_uri = os.getenv("MONGO_URI")
     if mongo_uri:
         try:
-            m_client = MongoClient(mongo_uri)
+            m_client = MongoClient(os.environ["FOR_METADATA_MONGO_URI"])
             db_mongo = m_client["logistics"]
-            config_doc = db_mongo["agent_configs"].find_one({"agent_id": "taskmaster"})
+            config_doc = db_mongo["20260320-agent-configs"].find_one(
+                {"agent_id": "taskmaster"}
+            )
             if config_doc and "system_instruction" in config_doc:
                 system_instruction = config_doc["system_instruction"]
                 print("[Info] Loaded system instruction from MongoDB.")
