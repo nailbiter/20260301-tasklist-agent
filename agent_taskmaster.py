@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from utils import get_configured_logger
+import typing
 
 # Load environment variables
 load_dotenv()
@@ -195,14 +196,15 @@ def get_jira_tasks(
 
 
 def get_mongo_tasks(
-    # status: str = "TODO", when: str = None, due_today: bool = True
-    is_timely: bool = True,
+    before: str = None,
+    omit_statuses: str = "DONE,FAILED",
 ) -> str:
     """
     Retrieves personal tasks from the custom MongoDB database.
 
     Args:
-    is_timely: whether the task is timely or not
+    before: return only tasks with scheduled_date<=before (date should be in YYYY-MM-DD format)
+    omit_statuses: omit comma-separated statuses (default is 'DONE,FAILED')
     """
     mongo_uri = os.getenv("MONGO_URI")
     mongo_db_name = os.getenv("MONGO_DB_NAME") or "gstasks"
@@ -212,35 +214,43 @@ def get_mongo_tasks(
             {"error": "MONGO_URI environment variable is not configured."}
         )
 
-    print(f"[Tool Execution] Fetching Mongo tasks ({dict(is_timely=is_timely)})...")
+    print(
+        f"[Tool Execution] Fetching Mongo tasks (before={before}, omit_statuses={omit_statuses})..."
+    )
 
     logger = get_configured_logger(
         "get_mongo_tasks", level="INFO", log_to_file=LOG_FILE, file_mode="a"
     )
-    logger.debug("hi")
+    logger.debug(dict(before=before))
 
     try:
         client = MongoClient(mongo_uri)
         db = client[mongo_db_name]
         collection = db["tasks"]
 
-        query = {}
-        query = {"scheduled_date": {"$gt": datetime.datetime(2026, 2, 27)}}
-        # if status:
-        #     query["status"] = status
-        # if when:
-        #     query["when"] = when
+        omit_list = [s.strip() for s in omit_statuses.split(",") if s.strip()]
 
-        # if due_today:
-        #     today = datetime.datetime.now().replace(
-        #         hour=0, minute=0, second=0, microsecond=0
-        #     )
-        #     today_str = today.strftime("%Y-%m-%d")
-        #     date_query = {"$in": [today, today_str]}
-        #     query["$or"] = [{"scheduled_date": date_query}, {"due": date_query}]
+        clauses = []
+        # Keep the recent tasks filter if that's intended, but let's make it more robust or remove if not needed.
+        clauses.append({"scheduled_date": {"$gt": datetime.datetime(2026, 2, 27)}})
 
-        # cursor = collection.find(query).limit(20)
-        cursor = collection.find(query)
+        for s in omit_list:
+            clauses.append({"status": {"$ne": s}})
+
+        if before is not None:
+            before_dt = datetime.datetime.strptime(before, "%Y-%m-%d")
+            clauses.append({"scheduled_date": {"$lte": before_dt}})
+
+        if not clauses:
+            query = {}
+        elif len(clauses) == 1:
+            query = clauses[0]
+        else:
+            query = {"$and": clauses}
+
+        logger.debug(dict(query=query))
+
+        cursor = collection.find(query).limit(50)
         tasks = []
         for doc in cursor:
             processed_doc = {}
@@ -254,11 +264,10 @@ def get_mongo_tasks(
             tasks.append(processed_doc)
 
         client.close()
-        logger.debug(len(tasks))
-        logger.debug(tasks)
+        logger.debug(f"Found {len(tasks)} tasks")
         return json.dumps(tasks)
     except Exception as e:
-        logger.error(e)
+        logger.error(f"Error in get_mongo_tasks: {e}", exc_info=True)
         return json.dumps({"error": f"Failed to fetch Mongo tasks: {str(e)}"})
 
 
