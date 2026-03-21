@@ -8,6 +8,8 @@ from flask import Flask, request, jsonify
 import requests
 from dotenv import load_dotenv
 
+import agent_taskmaster
+
 # Assuming your common logging is in the PYTHONPATH
 from utils import get_configured_logger
 
@@ -59,22 +61,32 @@ def process_event(event):
     Background worker to handle LLM logic and respond to Slack.
     This bypasses the 3-second timeout.
     """
-    user_text = event.get("text", "")
+    user_text = event.get("text", "").strip()
     channel = event.get("channel")
     user_id = event.get("user")
 
     logger.info(f"Background processing for user {user_id}: {user_text}")
 
-    # --- INTEGRATION POINT ---
-    # This is where you will eventually call your agent logic:
-    # from agent_taskmaster import run_agent_query
-    # ai_response = run_agent_query(user_text)
+    # Session Management: "reset session" starts a new session,
+    # otherwise we fetch the most recent one.
+    is_reset = user_text.lower() == "reset session"
+    try:
+        session_id = agent_taskmaster.make_new_session_or_fetch_existing(
+            prefix="task", is_make_new=is_reset
+        )
 
-    # For now, we keep the "hi" logic but move it here
-    if "hi" in user_text.lower():
-        response_text = f"Hello <@{user_id}>! I'm your Taskmaster agent. How can I help with Jira or MongoDB today?"
-    else:
-        response_text = f"I received: '{user_text}'. (Agent logic not yet connected)"
+        if is_reset:
+            response_text = f"Session has been reset. (New Session ID: {session_id})"
+        else:
+            # Call the agent with the user's text and current session ID
+            _, response_text = agent_taskmaster.ask_agent(
+                user_text, session_id=session_id
+            )
+    except Exception as e:
+        logger.error(f"Error processing agent query: {e}", exc_info=True)
+        response_text = (
+            f"Sorry, I encountered an error while processing your request: {e}"
+        )
 
     # Post the result back to Slack via chat.postMessage
     try:
