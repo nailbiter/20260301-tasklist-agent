@@ -70,8 +70,8 @@ def process_event(event):
     logger.info(f"Background processing started for user {user_id}: {user_text}")
 
     # Session Management logic
-    is_reset = user_text.lower() == "reset session"
-    
+    is_reset = user_text.lower() in ["reset session", "restart session"]
+
     try:
         # Step 1: Manage Session
         session_id = agent_taskmaster.make_new_session_or_fetch_existing(
@@ -86,7 +86,7 @@ def process_event(event):
             _, response_text = agent_taskmaster.ask_agent(
                 user_text, session_id=session_id
             )
-            
+
     except Exception as e:
         logger.error(f"Error processing agent query: {e}", exc_info=True)
         response_text = f"⚠️ Error processing your request: {str(e)}"
@@ -96,10 +96,7 @@ def process_event(event):
         requests.post(
             "https://slack.com/api/chat.postMessage",
             headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
-            json={
-                "channel": channel, 
-                "text": response_text
-            },
+            json={"channel": channel, "text": response_text},
             timeout=10,
         )
         logger.info(f"Successfully posted response to Slack for user {user_id}")

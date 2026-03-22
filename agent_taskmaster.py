@@ -281,6 +281,7 @@ def get_mongo_tasks(
 
         client.close()
         logger.debug(f"Found {len(tasks)} tasks")
+        logger.debug(f"tasks:\n{json.dumps(tasks, indent=2, sort_keys=True)}")
         return json.dumps(tasks)
     except Exception as e:
         logger.error(f"Error in get_mongo_tasks: {e}", exc_info=True)
