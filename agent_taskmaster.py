@@ -232,7 +232,7 @@ def get_mongo_tasks(
 
         clauses = []
         # Keep the recent tasks filter if that's intended, but let's make it more robust or remove if not needed.
-        clauses.append({"scheduled_date": {"$gt": datetime.datetime(2026, 2, 27)}})
+        clauses.append({"scheduled_date": {"$gt": datetime.datetime(2026, 2, 7)}})
 
         for s in omit_list:
             clauses.append({"status": {"$ne": s}})
