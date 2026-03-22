@@ -84,3 +84,46 @@ python list-sprints.py
 - **Logging:** Use `utils.get_configured_logger` for consistent logging across the application.
 - **Tool Calling:** When adding new capabilities, define them as functions in the respective agent script and include them in the `tools` list passed to `types.GenerateContentConfig`. Ensure they have clear docstrings as these are used by Gemini to understand the tool.
 - **System Instructions:** Any changes to the agent's behavior, tone, or high-level logic should be made in the corresponding `system_message*.md` file.
+
+## Slack Integration
+
+```markdown
+## Slack Integration (Middleware)
+
+The project includes a serverless middleware to funnel Slack messages from a specific channel into the automation pipeline.
+
+### Architecture
+- **Trigger:** Slack Events API (specifically `message.channels`).
+- **Hosting:** Google Cloud Run (`us-east1`).
+- **Security:** HMAC SHA256 signature verification via `X-Slack-Signature`.
+- **Filtering:** The middleware only processes messages from a specific `TARGET_CHANNEL_ID` and ignores bot users to prevent infinite loops.
+
+### Components
+- `main.py`: A Flask-based entry point that handles the Slack "challenge" handshake, verifies request authenticity, and executes logic based on message content.
+- `deploy.sh`: A shell script to deploy the service to Cloud Run with the necessary environment variables.
+- `Dockerfile`: Containerizes the Flask app using `gunicorn` for production-grade concurrency.
+
+### Configuration (Add to .env)
+```env
+# Slack Integration
+SLACK_SIGNING_SECRET=your_signing_secret
+SLACK_BOT_TOKEN=xoxb-your-bot-token
+TARGET_CHANNEL_ID=C0123ABC456
+PORT=8080
+```
+
+### Deployment
+```bash
+chmod +x deploy.sh
+./deploy.sh
+```
+```
+
+---
+
+### Pro-tip for your CLI Agent:
+Since you are using `gemini-2.5-flash-lite`, it will be very efficient at parsing this documentation. When you start the next session, you can simply say: 
+
+> "I've added a Slack Middleware section to GEMINI.md. We currently have a basic 'echo' logic in `main.py`. I want to connect this middleware to my existing Taskmaster tools."
+
+Is there anything else you'd like to adjust in the project structure before you switch over to the CLI?
