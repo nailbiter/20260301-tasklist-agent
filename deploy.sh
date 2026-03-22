@@ -24,3 +24,6 @@ gcloud run deploy $SERVICE_NAME \
 # Output the URL to paste into Slack App Dashboard
 echo "--- Deployment Complete ---"
 gcloud run services describe $SERVICE_NAME --platform managed --region $REGION --format 'value(status.url)'
+
+## update system message, just in case
+./update_system_message.py
