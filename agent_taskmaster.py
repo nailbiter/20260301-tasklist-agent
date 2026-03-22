@@ -263,6 +263,22 @@ def get_mongo_tasks(
                     processed_doc[k] = v
             tasks.append(processed_doc)
 
+        # Resolve tag names
+        tag_uuids = set()
+        for t in tasks:
+            if "tags" in t and isinstance(t["tags"], list):
+                for tag_id in t["tags"]:
+                    tag_uuids.add(tag_id)
+
+        if tag_uuids:
+            tags_collection = db["tags"]
+            tags_cursor = tags_collection.find({"uuid": {"$in": list(tag_uuids)}})
+            tag_map = {doc["uuid"]: doc.get("name", doc["uuid"]) for doc in tags_cursor}
+
+            for t in tasks:
+                if "tags" in t and isinstance(t["tags"], list):
+                    t["tags"] = [tag_map.get(tag_id, tag_id) for tag_id in t["tags"]]
+
         client.close()
         logger.debug(f"Found {len(tasks)} tasks")
         return json.dumps(tasks)
