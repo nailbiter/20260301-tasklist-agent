@@ -1,5 +1,12 @@
-[tool.black]
+[project]
+name = "20260301-tasklist-agent"
+version = "0.1.0"
+description = "CLI Task Agent powered by Google Gemini"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
 
+[tool.black]
 # isort -> black
 # https://black.readthedocs.io/en/stable/guides/using_black_with_other_tools.html
 [tool.isort]
