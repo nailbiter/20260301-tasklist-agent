@@ -1,11 +1,20 @@
+# Core SDKs
 google-genai>=0.3.0
+langgraph>=0.0.15
+langchain-google-genai>=1.0.0
+langgraph-checkpoint-firestore>=0.0.1
+
+# Environment & Utils
 python-dotenv>=1.0.1
-pymongo>=4.6.1
 requests>=2.31.0
+pymongo>=4.6.1
+
+# Firestore (for LangGraph persistence)
 google-cloud-firestore>=2.14.0
 
+# Web Server (Slack Middleware)
 flask==3.0.0
-requests==2.31.0
 gunicorn==21.2.0
 
-#git+https://github.com/nailbiter/alex_leontiev_toolbox_python@main-stable
+# Custom Toolbox (optional/commented out)
+# git+https://github.com/nailbiter/alex_leontiev_toolbox_python@main-stable
