@@ -18,3 +18,5 @@ gunicorn==21.2.0
 
 # Custom Toolbox (optional/commented out)
 # git+https://github.com/nailbiter/alex_leontiev_toolbox_python@main-stable
+# alex-leontiev-toolbox-python @ git+https://github.com/nailbiter/alex_leontiev_toolbox_python@main-stable
+# alex_leontiev_toolbox_python[bigquery] @ git+https://github.com/nailbiter/alex_leontiev_toolbox_python@main-stable

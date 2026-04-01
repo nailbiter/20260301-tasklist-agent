@@ -4,10 +4,26 @@ version = "0.1.0"
 description = "CLI Task Agent powered by Google Gemini"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "flask==3.0.0",
+    "google-cloud-firestore>=2.14.0",
+    "google-genai>=0.3.0",
+    "gunicorn==21.2.0",
+    "langchain-google-genai>=1.0.0",
+    "langgraph>=0.0.15",
+    "langgraph-checkpoint-firestore>=0.0.1",
+    "pymongo>=4.6.1",
+    "python-dotenv>=1.0.1",
+    "requests>=2.31.0",
+]
 
 [tool.black]
 # isort -> black
 # https://black.readthedocs.io/en/stable/guides/using_black_with_other_tools.html
 [tool.isort]
 profile = "black"
+
+[dependency-groups]
+dev = [
+    "langgraph-cli>=0.4.19",
+]
