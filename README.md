@@ -19,4 +19,20 @@ pip install google-genai python-dotenv pymongo requests
 
 ## TODO
 
+### tasklist agent
+
+#### first-priority
+
+1. CLI
+2. SLACK
+
+#### second-priority
+
 1. memory (via mongo; ask for options)
+
+#### third-priority
+
+1. tool: add tag to a task
+
+
+
