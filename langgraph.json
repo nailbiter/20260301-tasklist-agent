@@ -1,0 +1,11 @@
+{
+  "name": "taskmaster-agent",
+  "version": "0.1.0",
+  "dependencies": [
+    "."
+  ],
+  "graphs": {
+    "agent": "./agent_langgraph_taskmaster.py:app"
+  },
+  "env": ".env"
+}
