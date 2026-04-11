@@ -8,7 +8,13 @@ from jinja2 import Template
 import pandas as pd
 
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    BaseMessage,
+    HumanMessage,
+    AIMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
@@ -28,6 +34,10 @@ _log_file = os.path.join(
 global_logger = get_configured_logger(
     "agent_langgraph_taskmaster", log_to_file=_log_file, level="WARNING"
 )
+
+# ---------------------------------------------------------------------------
+# Tool Definitions
+# ---------------------------------------------------------------------------
 
 
 @tool
@@ -59,15 +69,24 @@ def postpone_task(uuid: str, new_date: str):
 
 @tool
 def get_mongo_tasks(
-    before: str = None, on_date: str = None, omit_statuses: str = "DONE,FAILED"
+    scheduled_before: str = None,
+    scheduled_on: str = None,
+    scheduled_after: str = None,
+    name_regex: str = None,
+    omit_statuses: str = "DONE,FAILED",
+    search_all: bool = False,
 ) -> str:
     """
     Retrieves personal tasks from the custom MongoDB database.
+    By default, it only returns tasks scheduled after 2026-02-07 unless search_all is True.
 
     Args:
-        before: Return only tasks with scheduled_date <= before. Format: YYYY-MM-DD.
-        on_date: Return only tasks with scheduled_date == on_date. Format: YYYY-MM-DD.
-        omit_statuses: Comma-separated statuses to omit (default: "DONE,FAILED").
+        scheduled_before: Return tasks scheduled on or before this date. Format: YYYY-MM-DD.
+        scheduled_on: Return tasks scheduled exactly on this date. Format: YYYY-MM-DD.
+        scheduled_after: Return tasks scheduled on or after this date (e.g., for finding future tasks). Format: YYYY-MM-DD.
+        name_regex: Use a case-insensitive regular expression to search for specific words or patterns in the task name.
+        omit_statuses: Comma-separated statuses to exclude. Default is "DONE,FAILED".
+        search_all: Set to True to completely bypass default date restrictions when searching across all time (e.g., global searches).
     """
     mongo_uri = os.getenv("MONGO_URI")
     db_name = os.getenv("MONGO_DB_NAME") or "gstasks"
@@ -81,26 +100,35 @@ def get_mongo_tasks(
         db_mongo = client[db_name]
         collection = db_mongo["tasks"]
 
-        queries = [
-            ## SIC! do not remove this, this is important
-            {"scheduled_date": {"$gt": datetime.datetime(2026, 2, 7)}},
-        ]
+        queries = []
+        # this should not be overridable
+        queries.append({"scheduled_date": {"$gt": datetime.datetime(2026, 2, 7)}})
 
-        if before:
+        if not search_all:
+            logger.debug(dict(search_all=search_all))
+
+        if scheduled_before:
             query = {}
-            query["scheduled_date"] = {"$lte": pd.to_datetime(before)}
+            query["scheduled_date"] = {"$lte": pd.to_datetime(scheduled_before)}
             queries.append(query)
-        if on_date:
+        if scheduled_on:
             query = {}
-            dt = pd.to_datetime(on_date)
+            dt = pd.to_datetime(scheduled_on)
             start_of_day = dt.replace(hour=0, minute=0, second=0, microsecond=0)
             end_of_day = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
             query["scheduled_date"] = {"$gte": start_of_day, "$lte": end_of_day}
             queries.append(query)
+        if scheduled_after:
+            query = {}
+            query["scheduled_date"] = {"$gte": pd.to_datetime(scheduled_after)}
+            queries.append(query)
+
+        if name_regex:
+            queries.append({"name": {"$regex": name_regex, "$options": "i"}})
         for status in omit_statuses.split(","):
             queries.append({"status": {"$ne": status}})
 
-        query = {"$and": queries}
+        query = {"$and": queries} if queries else {}
         logger.debug(dict(query=query))
 
         # Project only allowed fields
@@ -143,6 +171,10 @@ def get_mongo_tasks(
 
         # Convert datetimes and clean up JSON-invalid values
         for t in tasks:
+            # Impute status
+            if not t.get("status"):
+                t["status"] = "TODO"
+
             for k, v in t.items():
                 if isinstance(v, datetime.datetime):
                     t[k] = v.strftime("%Y-%m-%d")
