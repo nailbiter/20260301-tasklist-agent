@@ -1,40 +1,48 @@
 #!/usr/bin/env python3
-import sys
-import json
-import os
+import sys, json, os
 
-def get_statusline():
-    # 1. Read session data from Claude (piped into stdin)
+# Current USD/JPY exchange rate (April 2026)
+USD_JPY_RATE = 159.25
+YEN_SIGN = "\u00A5"
+
+
+def run():
+    # 1. Read Claude's real-time session input from stdin
     try:
-        input_data = sys.stdin.read()
-        claude = json.loads(input_data) if input_data else {}
+        claude = json.loads(sys.stdin.read())
     except:
         claude = {}
 
-    # 2. Read your monthly GCP spend from your existing cache
-    state_file = os.path.expanduser("~/.claude_spend.json")
-    gcp_spend = "¥?"
-    if os.path.exists(state_file):
+    # 2. Read your Monthly GCP Spend from your background puller
+    cache_path = os.path.expanduser("~/.claude_spend.json")
+    monthly_info = "?"
+    if os.path.exists(cache_path):
         try:
-            with open(state_file, 'r') as f:
-                state = json.load(f)
-                current = state.get("costAmount", 0)
-                limit = state.get("budgetAmount", 0)
-                # Format: ¥72 (4%)
-                pct = f" ({(current/limit)*100:.0f}%)" if limit > 0 else ""
-                gcp_spend = f"¥{current}{pct}"
+            with open(cache_path, "r") as f:
+                data = json.load(f)
+                monthly_info = f"{int(data.get('costAmount', 0))}"
         except:
-            gcp_spend = "¥err"
+            monthly_info = "err"
 
-    # 3. Extract built-in Claude metrics
+    # 3. Process Claude's built-in metrics
     model = claude.get("model", {}).get("display_name", "Claude")
-    context = claude.get("context_window", {}).get("used_percentage", 0)
-    session_cost = claude.get("cost", {}).get("total_cost_usd", 0)
 
-    # 4. Format the final line
-    # Left: Model and Context | Right: Session Cost & Monthly GCP Spend
-    line = f"🤖 {model} | 🧠 {context}% | 💰 Ses: ${session_cost:.2f} | 📈 Mo: {gcp_spend}"
-    print(line)
+    # Context Usage
+    ctx_pct = claude.get("context_window", {}).get("used_percentage", 0)
+    ctx = f"{ctx_pct}%"
+
+    # Session Cost: Convert USD to JPY
+    usd_cost = claude.get("cost", {}).get("total_cost_usd", 0)
+    jpy_session_cost = usd_cost * USD_JPY_RATE
+    # We use .1f to show small spends like 2.5
+    ses_cost = f"{jpy_session_cost:.1f}"
+
+    # 4. Final Output Line
+    # Format: [Model] | [Context] | Ses: [Session Cost] | Mo: [Monthly Total]
+    print(
+        f"{model} | ?? {ctx} | Ses: {ses_cost}{YEN_SIGN} | Mo: {monthly_info}{YEN_SIGN}"
+    )
+
 
 if __name__ == "__main__":
-    get_statusline()
+    run()

@@ -26,6 +26,15 @@ from alex_leontiev_toolbox_python.utils.logging_helpers import get_configured_lo
 # Load environment variables
 load_dotenv()
 
+
+def get_mongo_client():
+    return MongoClient(
+        os.getenv("MONGO_URI"),
+        tlsAllowInvalidCertificates=True,
+        tlsAllowInvalidHostnames=True,
+    )
+
+
 # logging
 _log_file = os.path.join(
     ".logs",
@@ -45,7 +54,7 @@ def mark_task_done(uuid: str):
     """
     Mark a task as DONE by its UUID.
     """
-    client = MongoClient(os.getenv("MONGO_URI"))
+    client = get_mongo_client()
     db_mongo = client[os.getenv("MONGO_DB_NAME") or "gstasks"]
     collection = db_mongo["tasks"]
     result = collection.update_one({"uuid": uuid}, {"$set": {"status": "DONE"}})
@@ -58,7 +67,7 @@ def postpone_task(uuid: str, new_date: str):
     """
     Postpone a task to a new date (YYYY-MM-DD).
     """
-    client = MongoClient(os.getenv("MONGO_URI"))
+    client = get_mongo_client()
     db_mongo = client[os.getenv("MONGO_DB_NAME") or "gstasks"]
     collection = db_mongo["tasks"]
     new_dt = pd.to_datetime(new_date)
@@ -96,7 +105,7 @@ def get_mongo_tasks(
         return json.dumps({"error": "MONGO_URI not configured."})
 
     try:
-        client = MongoClient(mongo_uri)
+        client = get_mongo_client()
         db_mongo = client[db_name]
         collection = db_mongo["tasks"]
 
@@ -209,6 +218,7 @@ tools = [get_mongo_tasks, mark_task_done, postpone_task]
 
 
 def run_agent(state: State):
+    logger = global_logger.getChild("run_agent")
     model = ChatGoogleGenerativeAI(temperature=0.2, model="gemini-2.5-flash-lite")
     model_with_tools = model.bind_tools(tools)
 
@@ -216,10 +226,12 @@ def run_agent(state: State):
 
     # Prepend system message if not present
     messages = list(state["messages"])
+    logger.debug(dict(request=messages[-1] if len(messages) > 0 else None))
     if not messages or not isinstance(messages[0], SystemMessage):
         messages = [system_msg] + messages
 
     response = model_with_tools.invoke(messages)
+    logger.debug(dict(response=response))
     return {"messages": [response]}
 
 
