@@ -10,7 +10,7 @@ import pandas as pd
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_core.tools import tool
-from langgraph.graph import StateGraph, START
+from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.memory import MemorySaver
@@ -29,9 +29,32 @@ global_logger = get_configured_logger(
     "agent_langgraph_taskmaster", log_to_file=_log_file, level="WARNING"
 )
 
-# ---------------------------------------------------------------------------
-# Tool Definitions
-# ---------------------------------------------------------------------------
+
+@tool
+def mark_task_done(uuid: str):
+    """
+    Mark a task as DONE by its UUID.
+    """
+    client = MongoClient(os.getenv("MONGO_URI"))
+    db_mongo = client[os.getenv("MONGO_DB_NAME") or "gstasks"]
+    collection = db_mongo["tasks"]
+    result = collection.update_one({"uuid": uuid}, {"$set": {"status": "DONE"}})
+    client.close()
+    return f"Task {uuid} marked as DONE"
+
+
+@tool
+def postpone_task(uuid: str, new_date: str):
+    """
+    Postpone a task to a new date (YYYY-MM-DD).
+    """
+    client = MongoClient(os.getenv("MONGO_URI"))
+    db_mongo = client[os.getenv("MONGO_DB_NAME") or "gstasks"]
+    collection = db_mongo["tasks"]
+    new_dt = pd.to_datetime(new_date)
+    result = collection.update_one({"uuid": uuid}, {"$set": {"scheduled_date": new_dt}})
+    client.close()
+    return f"Task {uuid} postponed to {new_date}"
 
 
 @tool
@@ -151,9 +174,12 @@ def get_system_message():
     return SystemMessage(content=template.render(date=today))
 
 
+tools = [get_mongo_tasks, mark_task_done, postpone_task]
+
+
 def run_agent(state: State):
     model = ChatGoogleGenerativeAI(temperature=0.2, model="gemini-2.5-flash-lite")
-    model_with_tools = model.bind_tools([get_mongo_tasks])
+    model_with_tools = model.bind_tools(tools)
 
     system_msg = get_system_message()
 
@@ -166,18 +192,60 @@ def run_agent(state: State):
     return {"messages": [response]}
 
 
+# --- New Action Node ---
+
+
+def action_node(state: State):
+    last_message = state["messages"][-1]
+    tool_messages = []
+
+    for tool_call in last_message.tool_calls:
+        tool_name = tool_call["name"]
+        args = tool_call["args"]
+
+        res = None
+        if tool_name == "get_mongo_tasks":
+            res = get_mongo_tasks.invoke(args)
+        elif tool_name == "mark_task_done":
+            res = mark_task_done.invoke(args)
+        elif tool_name == "postpone_task":
+            res = postpone_task.invoke(args)
+
+        tool_messages.append(
+            ToolMessage(content=str(res), tool_call_id=tool_call["id"])
+        )
+    return {"messages": tool_messages}
+
+
+def should_continue(state: State) -> str:
+    messages = state["messages"]
+    last_message = messages[-1]
+    if not last_message.tool_calls:
+        return END
+
+    # Interrupt only if edit tools are called
+    edit_tools = ["mark_task_done", "postpone_task"]
+    if any(tc["name"] in edit_tools for tc in last_message.tool_calls):
+        return "action"
+    return "read_action"
+
+
 workflow = StateGraph(State)
 workflow.add_node("agent", run_agent)
-workflow.add_node("tools", ToolNode([get_mongo_tasks]))
+workflow.add_node("action", action_node)
+workflow.add_node("read_action", action_node)
 
 workflow.add_edge(START, "agent")
-workflow.add_conditional_edges("agent", tools_condition)
-workflow.add_edge("tools", "agent")
+workflow.add_conditional_edges(
+    "agent",
+    should_continue,
+    {"action": "action", "read_action": "read_action", END: END},
+)
+workflow.add_edge("action", "agent")
+workflow.add_edge("read_action", "agent")
 
-compile_kwargs = {}
+compile_kwargs = {"interrupt_before": ["action"]}
 if not os.getenv("IS_LANGGRAPH_DEV", "1") == "1":
-    # For persistent running (e.g. cloud), you'd swap this back to Firestore
-    # For now, we default to MemorySaver as requested
     checkpointer = MemorySaver()
     compile_kwargs["checkpointer"] = checkpointer
 
