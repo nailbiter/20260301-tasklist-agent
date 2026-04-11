@@ -16,3 +16,7 @@ A command-line LLM agent powered by Gemini that aggregates and answers questions
 ```bash
 pip install google-genai python-dotenv pymongo requests
 ```
+
+## TODO
+
+1. memory (via mongo; ask for options)
