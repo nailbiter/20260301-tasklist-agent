@@ -8,7 +8,7 @@ from jinja2 import Template
 import pandas as pd
 
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
@@ -109,7 +109,6 @@ def get_mongo_tasks(
             "name": 1,
             "scheduled_date": 1,
             "status": 1,
-            "when": 0,
             "due": 1,
             "tags": 1,
             "comment": 1,
