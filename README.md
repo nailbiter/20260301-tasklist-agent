@@ -31,10 +31,9 @@ pip install google-genai python-dotenv pymongo requests
 #### second-priority
 
 1. memory (via mongo; ask for options)
+2. more states (e.g. prioritizer)
 
 #### third-priority
 
 1. tool: add tag to a task
-
-
-
+2. [easy] tool: postpone and mark as pending (modify existing tool)
