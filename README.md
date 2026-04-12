@@ -24,6 +24,8 @@ pip install google-genai python-dotenv pymongo requests
 #### first-priority
 
 1. CLI
+   * more debug info for action
+   * batch processing
 2. SLACK
 
 #### second-priority

@@ -213,3 +213,5 @@ __marimo__/
 gstasks.tasks.json
 .langgraph_api/
 state.sqlite
+state.sqlite-shm
+state.sqlite-wal
