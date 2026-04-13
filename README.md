@@ -16,3 +16,24 @@ A command-line LLM agent powered by Gemini that aggregates and answers questions
 ```bash
 pip install google-genai python-dotenv pymongo requests
 ```
+
+## TODO
+
+### tasklist agent
+
+#### first-priority
+
+1. CLI
+   * more debug info for action
+   * batch processing
+2. SLACK
+
+#### second-priority
+
+1. memory (via mongo; ask for options)
+2. more states (e.g. prioritizer)
+
+#### third-priority
+
+1. tool: add tag to a task
+2. [easy] tool: postpone and mark as pending (modify existing tool)

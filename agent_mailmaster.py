@@ -254,10 +254,13 @@ def ask_agent(prompt: str, session_id: str = None) -> str:
         The session_id used for this interaction.
     """
     global request_count
+
     if session_id is None:
-        session_id = str(uuid.uuid4())
+        session_id = f"mail_{uuid.uuid4()}"
         print(f"[New Session Created] Session ID: {session_id}")
     else:
+        if not session_id.startswith("mail_"):
+            session_id = f"mail_{session_id}"
         print(f"[Existing Session] Session ID: {session_id}")
 
     api_key = os.getenv("GEMINI_API_KEY")

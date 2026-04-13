@@ -1,5 +1,31 @@
-google-genai>=0.3.0
+# LangGraph Core & Checkpointing
+langgraph>=0.2.0
+langgraph-checkpoint-sqlite>=2.0.0
+
+# LangGraph IDE / Studio Support
+# The [inmem] extra is essential for the 'langgraph dev' command
+langgraph-cli[inmem]>=0.1.12
+
+# LLM Integration (Gemini)
+langchain-google-genai>=1.0.0
+langchain-core>=0.2.0
+
+# Database & Environment
+pymongo[srv]>=4.10.0
 python-dotenv>=1.0.1
-pymongo>=4.6.1
+
+# GCP Cloud Run/Firestore Readiness
+google-cloud-firestore>=2.19.0
+langgraph-checkpoint-firestore>=0.1.7
+
+# Utilities
+pydantic>=2.7.0
+jinja2>=3.1.0
+click>=8.3.2
+
+# Slack/Server Middleware
+flask==3.0.0
+gunicorn==21.2.0
 requests>=2.31.0
-google-cloud-firestore>=2.14.0
+
+alex_leontiev_toolbox_python @ git+https://github.com/nailbiter/alex_leontiev_toolbox_python@main-stable
