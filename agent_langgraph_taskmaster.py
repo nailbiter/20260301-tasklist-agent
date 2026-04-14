@@ -36,6 +36,7 @@ def get_mongo_client():
 
 
 # logging
+os.makedirs(".logs", exist_ok=True)
 _log_file = os.path.join(
     ".logs",
     f"agent_langgraph_taskmaster-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}.log.txt",
@@ -207,9 +208,13 @@ class State(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
 
 
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
 def get_system_message():
     today = datetime.date.today().strftime("%Y-%m-%d")
-    with open("system_message_taskmaster.jinja.md", "r") as f:
+    path = os.path.join(_SCRIPT_DIR, "system_message_taskmaster.jinja.md")
+    with open(path, "r") as f:
         template = Template(f.read())
     return SystemMessage(content=template.render(date=today))
 

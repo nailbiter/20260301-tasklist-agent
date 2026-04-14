@@ -26,7 +26,15 @@ def run_agent_turn(graph, config, message=None):
     # Check for interrupts (Human-in-the-loop)
     snapshot = graph.get_state(config)
     while snapshot.next:
-        click.echo(f"\n[!] INTERRUPT: Agent is about to execute: {snapshot.next}")
+        messages = snapshot.values.get("messages", [])
+        last_ai = next((m for m in reversed(messages) if hasattr(m, "tool_calls")), None)
+        if last_ai and last_ai.tool_calls:
+            calls_desc = ", ".join(
+                f"{tc['name']}({tc['args']})" for tc in last_ai.tool_calls
+            )
+            click.echo(f"\n[!] INTERRUPT: Agent is about to call: {calls_desc}")
+        else:
+            click.echo(f"\n[!] INTERRUPT: Agent is about to execute: {snapshot.next}")
         if click.confirm("Do you want to proceed?"):
             for event in graph.stream(None, config, stream_mode="values"):
                 pass
@@ -98,4 +106,3 @@ def main(message, session_id, list_sessions):
 
 if __name__ == "__main__":
     main()
-a

@@ -1,33 +1,24 @@
-# Use an official Python runtime as a parent image
 FROM python:3.10-slim
 
-# Set the working directory in the container
 WORKDIR /app
 
-# Set environment variables for Gunicorn
-ENV PORT 8080
-ENV TIMEOUT 120
-ENV WORKER_CLASS "uvicorn.workers.UvicornWorker"
-ENV WORKERS 1
-ENV LOG_LEVEL "info"
+ENV PORT=8080 TIMEOUT=120 WORKERS=1 LOG_LEVEL=info
 
-# Copy the requirements file and install dependencies
+# git is required to pip-install alex_leontiev_toolbox_python from GitHub
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application code into the container
-# This includes main.py and notebook.ipynb
-COPY main.py .
-COPY notebook.ipynb .
-COPY common.py .
+COPY agent_langgraph_taskmaster.py .
+COPY slack_taskmaster_server.py .
+# _system_message_taskmaster.jinja.md is the symlink resolved by deploy.sh before build
+COPY _system_message_taskmaster.jinja.md system_message_taskmaster.jinja.md
 
-ENV IS_ENSURE_DAY 'Fri'
+RUN mkdir -p .logs
 
-# Run the web server using Gunicorn
-# Gunicorn manages the Uvicorn workers for better stability
-CMD exec gunicorn main:app \
+CMD exec gunicorn slack_taskmaster_server:app \
     --bind "0.0.0.0:${PORT}" \
     --workers "${WORKERS}" \
-    --worker-class "${WORKER_CLASS}" \
     --timeout "${TIMEOUT}" \
     --log-level "${LOG_LEVEL}"
