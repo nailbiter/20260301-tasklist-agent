@@ -68,12 +68,24 @@ def main(message, session_id, list_sessions):
             try:
                 with sqlite3.connect(DB_PATH) as conn:
                     cursor = conn.cursor()
-                    cursor.execute("SELECT DISTINCT thread_id FROM checkpoints")
-                    threads = cursor.fetchall()
-                    if not threads:
-                        click.echo(" (No sessions found)")
-                    for t in threads:
-                        click.echo(f" - {t[0]}")
+                    cursor.execute(
+                        "SELECT thread_id FROM checkpoints GROUP BY thread_id ORDER BY MAX(checkpoint_id) DESC"
+                    )
+                    threads = [row[0] for row in cursor.fetchall()]
+                if not threads:
+                    click.echo(" (No sessions found)")
+                for t in threads:
+                    state = graph.get_state({"configurable": {"thread_id": t}})
+                    last_user = next(
+                        (
+                            m.content
+                            for m in reversed(state.values.get("messages", []))
+                            if hasattr(m, "type") and m.type == "human"
+                        ),
+                        None,
+                    )
+                    suffix = f': "{last_user}"' if last_user else ""
+                    click.echo(f" - {t}{suffix}")
             except sqlite3.OperationalError:
                 click.echo(" (No sessions found - database not yet initialized)")
             return

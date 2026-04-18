@@ -66,14 +66,18 @@ def mark_task_done(uuid: str):
 @tool
 def postpone_task(uuid: str, new_date: str):
     """
-    Postpone a task to a new date (YYYY-MM-DD).
+    Postpone a task to a new date (YYYY-MM-DD). uuid may be a prefix of the full UUID.
     """
     client = get_mongo_client()
     db_mongo = client[os.getenv("MONGO_DB_NAME") or "gstasks"]
     collection = db_mongo["tasks"]
     new_dt = pd.to_datetime(new_date)
-    result = collection.update_one({"uuid": uuid}, {"$set": {"scheduled_date": new_dt}})
+    result = collection.update_one(
+        {"uuid": {"$regex": f"^{uuid}"}}, {"$set": {"scheduled_date": new_dt}}
+    )
     client.close()
+    if result.matched_count == 0:
+        return f"No task found with UUID prefix '{uuid}'"
     return f"Task {uuid} postponed to {new_date}"
 
 
