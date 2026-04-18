@@ -1,7 +1,10 @@
+import os
 import typing
 import logging
 import functools
 import sys
+
+from pythonjsonlogger import jsonlogger
 
 
 @functools.singledispatch
@@ -85,13 +88,21 @@ def get_configured_logger(
 
     if log_to_file is not None:
         handler = logging.FileHandler(log_to_file, mode=file_mode)
-        # Create a formatter and set it for the handler
         formatter = logging.Formatter(
             log_format if file_log_format is None else file_log_format
         )
         handler.setLevel(getattr(logging, file_log_level))
         handler.setFormatter(formatter)
         handlers.append(handler)
+
+        base, ext = os.path.splitext(log_to_file)
+        json_log_path = (base + ".json") if ext else (log_to_file + ".json")
+        json_handler = logging.FileHandler(json_log_path, mode=file_mode)
+        json_handler.setLevel(getattr(logging, file_log_level))
+        json_handler.setFormatter(
+            jsonlogger.JsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s")
+        )
+        handlers.append(json_handler)
 
     # --- Step 5: Add the configured handler to YOUR logger ---
     for h in handlers:
