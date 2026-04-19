@@ -288,7 +288,7 @@ def _dispatch(
 
     thread_id = _get_or_create_session(user_id)
 
-    if cmd == "confirm":
+    if cmd in ("confirm", "/confirm"):
         if not _get_pending(user_id):
             reply_fn("No pending action to confirm.")
             return
@@ -297,7 +297,7 @@ def _dispatch(
         ).start()
         return
 
-    if cmd == "reject":
+    if cmd == ("reject", "/reject"):
         if not _get_pending(user_id):
             reply_fn("No pending action to reject.")
             return
