@@ -2,9 +2,7 @@
 set -e
 
 # Configuration
-PROJECT_ID="api-project-424250507607"
 REGION="us-east1"
-SERVICE_NAME="slack-taskmaster-middleware"
 
 # Ensure local .env variables are exported for the gcloud command
 if [ -f .env ]; then

@@ -11,6 +11,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY agent_langgraph_taskmaster.py .
+COPY utils.py .
 COPY slack_taskmaster_server.py .
 # _system_message_taskmaster.jinja.md is the symlink resolved by deploy.sh before build
 COPY _system_message_taskmaster.jinja.md system_message_taskmaster.jinja.md

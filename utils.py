@@ -4,7 +4,7 @@ import logging
 import functools
 import sys
 
-from pythonjsonlogger import jsonlogger
+from pythonjsonlogger import json as jsonlogger
 
 
 @functools.singledispatch

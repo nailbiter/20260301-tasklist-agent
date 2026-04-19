@@ -21,7 +21,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.memory import MemorySaver
 
-from alex_leontiev_toolbox_python.utils.logging_helpers import get_configured_logger
+from utils import get_configured_logger
 
 # Load environment variables
 load_dotenv()
@@ -43,6 +43,13 @@ _log_file = os.path.join(
 )
 global_logger = get_configured_logger(
     "agent_langgraph_taskmaster", log_to_file=_log_file, level="WARNING"
+)
+_conv_logger = get_configured_logger(
+    "conversation",
+    log_to_file=".logs/conversations.log",
+    file_mode="a",
+    level="WARNING",
+    file_log_level="INFO",
 )
 
 # ---------------------------------------------------------------------------
@@ -226,8 +233,9 @@ def get_system_message():
 tools = [get_mongo_tasks, mark_task_done, postpone_task]
 
 
-def run_agent(state: State):
+def run_agent(state: State, config: dict = None):
     logger = global_logger.getChild("run_agent")
+    thread_id = (config or {}).get("configurable", {}).get("thread_id", "unknown")
     model = ChatGoogleGenerativeAI(temperature=0.2, model="gemini-2.5-flash-lite")
     model_with_tools = model.bind_tools(tools)
 
@@ -235,12 +243,25 @@ def run_agent(state: State):
 
     # Prepend system message if not present
     messages = list(state["messages"])
-    logger.debug(dict(request=messages[-1] if len(messages) > 0 else None))
+    last_human = next(
+        (m for m in reversed(messages) if isinstance(m, HumanMessage)), None
+    )
+    if last_human:
+        _conv_logger.info(
+            last_human.content,
+            extra={"role": "user", "thread_id": thread_id, "content": last_human.content},
+        )
+    logger.debug(dict(request=messages[-1] if messages else None))
     if not messages or not isinstance(messages[0], SystemMessage):
         messages = [system_msg] + messages
 
     response = model_with_tools.invoke(messages)
     logger.debug(dict(response=response))
+    if response.content:
+        _conv_logger.info(
+            response.content,
+            extra={"role": "assistant", "thread_id": thread_id, "content": response.content},
+        )
     return {"messages": [response]}
 
 
