@@ -15,13 +15,14 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.memory import MemorySaver
 
-from alex_leontiev_toolbox_python.utils.logging_helpers import get_configured_logger
+from utils import get_configured_logger
 
 # Load environment variables
 load_dotenv()
@@ -36,12 +37,20 @@ def get_mongo_client():
 
 
 # logging
+os.makedirs(".logs", exist_ok=True)
 _log_file = os.path.join(
     ".logs",
     f"agent_langgraph_taskmaster-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}.log.txt",
 )
 global_logger = get_configured_logger(
     "agent_langgraph_taskmaster", log_to_file=_log_file, level="WARNING"
+)
+_conv_logger = get_configured_logger(
+    "conversation",
+    log_to_file=".logs/conversations.log",
+    file_mode="a",
+    level="WARNING",
+    file_log_level="INFO",
 )
 
 # ---------------------------------------------------------------------------
@@ -65,14 +74,18 @@ def mark_task_done(uuid: str):
 @tool
 def postpone_task(uuid: str, new_date: str):
     """
-    Postpone a task to a new date (YYYY-MM-DD).
+    Postpone a task to a new date (YYYY-MM-DD). uuid may be a prefix of the full UUID.
     """
     client = get_mongo_client()
     db_mongo = client[os.getenv("MONGO_DB_NAME") or "gstasks"]
     collection = db_mongo["tasks"]
     new_dt = pd.to_datetime(new_date)
-    result = collection.update_one({"uuid": uuid}, {"$set": {"scheduled_date": new_dt}})
+    result = collection.update_one(
+        {"uuid": {"$regex": f"^{uuid}"}}, {"$set": {"scheduled_date": new_dt}}
+    )
     client.close()
+    if result.matched_count == 0:
+        return f"No task found with UUID prefix '{uuid}'"
     return f"Task {uuid} postponed to {new_date}"
 
 
@@ -207,9 +220,13 @@ class State(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
 
 
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
 def get_system_message():
     today = datetime.date.today().strftime("%Y-%m-%d")
-    with open("system_message_taskmaster.jinja.md", "r") as f:
+    path = os.path.join(_SCRIPT_DIR, "system_message_taskmaster.jinja.md")
+    with open(path, "r") as f:
         template = Template(f.read())
     return SystemMessage(content=template.render(date=today))
 
@@ -217,8 +234,9 @@ def get_system_message():
 tools = [get_mongo_tasks, mark_task_done, postpone_task]
 
 
-def run_agent(state: State):
+def run_agent(state: State, config: RunnableConfig = None):
     logger = global_logger.getChild("run_agent")
+    thread_id = (config or {}).get("configurable", {}).get("thread_id", "unknown")
     model = ChatGoogleGenerativeAI(temperature=0.2, model="gemini-2.5-flash-lite")
     model_with_tools = model.bind_tools(tools)
 
@@ -226,12 +244,33 @@ def run_agent(state: State):
 
     # Prepend system message if not present
     messages = list(state["messages"])
-    logger.debug(dict(request=messages[-1] if len(messages) > 0 else None))
+    last_human = next(
+        (m for m in reversed(messages) if isinstance(m, HumanMessage)), None
+    )
+    if last_human:
+        _conv_logger.info(
+            last_human.content,
+            extra={
+                "role": "user",
+                "thread_id": thread_id,
+                "content": last_human.content,
+            },
+        )
+    logger.debug(dict(request=messages[-1] if messages else None))
     if not messages or not isinstance(messages[0], SystemMessage):
         messages = [system_msg] + messages
 
     response = model_with_tools.invoke(messages)
     logger.debug(dict(response=response))
+    if response.content:
+        _conv_logger.info(
+            response.content,
+            extra={
+                "role": "assistant",
+                "thread_id": thread_id,
+                "content": response.content,
+            },
+        )
     return {"messages": [response]}
 
 

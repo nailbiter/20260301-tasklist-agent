@@ -271,6 +271,7 @@ def ask_agent(prompt: str, session_id: str = None) -> str:
     api_key = api_key.strip("'\"")
     client = genai.Client(
         api_key=api_key,
+        project=os.environ["GENAI_GOOGLE_CLOUD_PROJECT"],
     )
 
     try:

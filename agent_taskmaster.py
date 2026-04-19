@@ -3,95 +3,14 @@ import datetime
 import json
 import requests
 from requests.auth import HTTPBasicAuth
-from pymongo import MongoClient, DESCENDING
-import uuid
-from google.cloud import firestore
+from pymongo import MongoClient
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from utils import get_configured_logger
-import typing
 
 # Load environment variables
 load_dotenv()
-
-# Initialize Firestore
-db = firestore.Client()
-
-LOG_FILE = f""".logs/{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}.log.txt"""
-
-# ---------------------------------------------------------------------------
-# Session Management (Firestore)
-# ---------------------------------------------------------------------------
-
-
-def load_chat_history(session_id: str) -> list:
-    """Loads the conversation history for a given session from Firestore."""
-    # Prefix the session_id to avoid collisions if necessary,
-    # but we are already using a separate collection.
-    doc_ref = db.collection("task_sessions").document(session_id)
-    doc = doc_ref.get()
-    if doc.exists:
-        # Firestore returns dicts, we need to convert them back to types.Content
-        history_data = doc.to_dict().get("history", [])
-        contents = []
-        for content_dict in history_data:
-            parts = []
-            for part_dict in content_dict.get("parts", []):
-                if "text" in part_dict:
-                    parts.append(types.Part.from_text(text=part_dict["text"]))
-                elif "function_call" in part_dict:
-                    fc = part_dict["function_call"]
-                    parts.append(
-                        types.Part(
-                            function_call=types.FunctionCall(
-                                name=fc["name"], args=fc["args"]
-                            )
-                        )
-                    )
-                elif "function_response" in part_dict:
-                    fr = part_dict["function_response"]
-                    parts.append(
-                        types.Part.from_function_response(
-                            name=fr["name"], response=fr["response"]
-                        )
-                    )
-            contents.append(types.Content(role=content_dict["role"], parts=parts))
-        return contents
-    return []
-
-
-def save_chat_history(session_id: str, contents: list):
-    """Saves the conversation history to Firestore."""
-    history_data = []
-    for content in contents:
-        parts_data = []
-        for part in content.parts:
-            if part.text:
-                parts_data.append({"text": part.text})
-            elif part.function_call:
-                parts_data.append(
-                    {
-                        "function_call": {
-                            "name": part.function_call.name,
-                            "args": part.function_call.args,
-                        }
-                    }
-                )
-            elif part.function_response:
-                parts_data.append(
-                    {
-                        "function_response": {
-                            "name": part.function_response.name,
-                            "response": part.function_response.response,
-                        }
-                    }
-                )
-        history_data.append({"role": content.role, "parts": parts_data})
-
-    doc_ref = db.collection("task_sessions").document(session_id)
-    doc_ref.set({"history": history_data, "updated_at": firestore.SERVER_TIMESTAMP})
-
 
 # ---------------------------------------------------------------------------
 # Tool Definitions (These will be exposed to Gemini)
@@ -109,9 +28,7 @@ def get_jira_tasks(
         status: The current status of the task (e.g., "To Do", "In Progress", "Done").
         is_current_sprint: If True, only returns tasks from the current active sprint.
     """
-    logger = get_configured_logger(
-        "get_jira_tasks", level="INFO", log_to_file=LOG_FILE, file_mode="a"
-    )
+    logger = get_configured_logger("get_jira_tasks", level="DEBUG")
 
     jira_url = os.getenv("JIRA_URL")
     jira_user = os.getenv("JIRA_USER") or os.getenv("JIRA_EMAIL")
@@ -196,15 +113,14 @@ def get_jira_tasks(
 
 
 def get_mongo_tasks(
-    before: str = None,
-    omit_statuses: str = "DONE,FAILED",
+    # status: str = "TODO", when: str = None, due_today: bool = True
+    is_timely: bool = True,
 ) -> str:
     """
     Retrieves personal tasks from the custom MongoDB database.
 
     Args:
-    before: return only tasks with scheduled_date<=before (date should be in YYYY-MM-DD format)
-    omit_statuses: omit comma-separated statuses (default is 'DONE,FAILED')
+    is_timely: whether the task is timely or not
     """
     mongo_uri = os.getenv("MONGO_URI")
     mongo_db_name = os.getenv("MONGO_DB_NAME") or "gstasks"
@@ -214,43 +130,31 @@ def get_mongo_tasks(
             {"error": "MONGO_URI environment variable is not configured."}
         )
 
-    print(
-        f"[Tool Execution] Fetching Mongo tasks (before={before}, omit_statuses={omit_statuses})..."
-    )
+    print(f"[Tool Execution] Fetching Mongo tasks ({dict(is_timely=is_timely)})...")
 
-    logger = get_configured_logger(
-        "get_mongo_tasks", level="INFO", log_to_file=LOG_FILE, file_mode="a"
-    )
-    logger.debug(dict(before=before))
+    logger = get_configured_logger("get_mongo_tasks", level="DEBUG")
 
     try:
         client = MongoClient(mongo_uri)
         db = client[mongo_db_name]
         collection = db["tasks"]
 
-        omit_list = [s.strip() for s in omit_statuses.split(",") if s.strip()]
+        query = {}
+        query = {"scheduled_date": {"$gt": datetime.datetime(2026, 2, 27)}}
+        # if status:
+        #     query["status"] = status
+        # if when:
+        #     query["when"] = when
 
-        clauses = []
-        # Keep the recent tasks filter if that's intended, but let's make it more robust or remove if not needed.
-        clauses.append({"scheduled_date": {"$gt": datetime.datetime(2026, 2, 7)}})
+        # if due_today:
+        #     today = datetime.datetime.now().replace(
+        #         hour=0, minute=0, second=0, microsecond=0
+        #     )
+        #     today_str = today.strftime("%Y-%m-%d")
+        #     date_query = {"$in": [today, today_str]}
+        #     query["$or"] = [{"scheduled_date": date_query}, {"due": date_query}]
 
-        for s in omit_list:
-            clauses.append({"status": {"$ne": s}})
-
-        if before is not None:
-            before_dt = datetime.datetime.strptime(before, "%Y-%m-%d")
-            clauses.append({"scheduled_date": {"$lte": before_dt}})
-
-        if not clauses:
-            query = {}
-        elif len(clauses) == 1:
-            query = clauses[0]
-        else:
-            query = {"$and": clauses}
-
-        logger.debug(dict(query=query))
-
-        cursor = collection.find(query).limit(50)
+        cursor = collection.find(query).limit(20)
         tasks = []
         for doc in cursor:
             processed_doc = {}
@@ -263,28 +167,10 @@ def get_mongo_tasks(
                     processed_doc[k] = v
             tasks.append(processed_doc)
 
-        # Resolve tag names
-        tag_uuids = set()
-        for t in tasks:
-            if "tags" in t and isinstance(t["tags"], list):
-                for tag_id in t["tags"]:
-                    tag_uuids.add(tag_id)
-
-        if tag_uuids:
-            tags_collection = db["tags"]
-            tags_cursor = tags_collection.find({"uuid": {"$in": list(tag_uuids)}})
-            tag_map = {doc["uuid"]: doc.get("name", doc["uuid"]) for doc in tags_cursor}
-
-            for t in tasks:
-                if "tags" in t and isinstance(t["tags"], list):
-                    t["tags"] = [tag_map.get(tag_id, tag_id) for tag_id in t["tags"]]
-
         client.close()
-        logger.debug(f"Found {len(tasks)} tasks")
-        logger.debug(f"tasks:\n{json.dumps(tasks, indent=2, sort_keys=True)}")
         return json.dumps(tasks)
     except Exception as e:
-        logger.error(f"Error in get_mongo_tasks: {e}", exc_info=True)
+        logger.error(e)
         return json.dumps({"error": f"Failed to fetch Mongo tasks: {str(e)}"})
 
 
@@ -296,95 +182,30 @@ logger = get_configured_logger("agent", level="INFO")
 request_count = 0
 
 
-def make_new_session_or_fetch_existing(prefix: str, is_make_new: bool = True) -> str:
-    logger = get_configured_logger(
-        "make_new_session", level="INFO", log_to_file=LOG_FILE, file_mode="a"
-    )
-
-    client = MongoClient(os.environ["FOR_METADATA_MONGO_URI"])
-    coll = client["logistics"]["20260321-agent-firestore-sessions"]
-
-    if is_make_new:
-        session_id = f"{prefix}_{uuid.uuid4()}"
-        coll.insert_one(
-            dict(session_id=session_id, prefix=prefix, dt=datetime.datetime.now())
-        )
-        logger.info(f"[New Session Created] Session ID: {session_id}")
-    else:
-        r = coll.find_one({"prefix": prefix}, sort=[("dt", DESCENDING)])
-        session_id = r["session_id"]
-        logger.info(f"fetching most recent session `{session_id}`")
-    return session_id
-
-
-def ask_agent(prompt: str, session_id: str = None) -> str:
+def ask_agent(prompt: str) -> None:
     """
     Main function to initialize the Gemini client, bind tools, and generate a response.
-    Loads and saves conversation history to/from Firestore for session persistence.
-
-    Args:
-        prompt: The user query.
-        session_id: A unique ID for the session. If None, a new UUID is generated.
-
-    Returns:
-        The session_id used for this interaction.
     """
-    logger = get_configured_logger(
-        "ask_agent", level="INFO", log_to_file=LOG_FILE, file_mode="a"
-    )
-
     global request_count
-
-    if session_id is None:
-        session_id = make_new_session_or_fetch_existing(prefix="task")
-    else:
-        if not session_id.startswith("task_"):
-            session_id = f"task_{session_id}"
-        print(f"[Existing Session] Session ID: {session_id}")
-
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         print("Error: GEMINI_API_KEY not found in environment.")
-        return session_id
+        return
 
     api_key = api_key.strip("'\"")
     client = genai.Client(
         api_key=api_key,
+        project=os.environ["GENAI_GOOGLE_CLOUD_PROJECT"],
     )
 
-    # --- Fetch System Instruction (DB with local fallback) ---
-    system_instruction = None
-    mongo_uri = os.getenv("MONGO_URI")
-    if mongo_uri:
-        try:
-            m_client = MongoClient(os.environ["FOR_METADATA_MONGO_URI"])
-            db_mongo = m_client["logistics"]
-            config_doc = db_mongo["20260320-agent-configs"].find_one(
-                {"agent_id": "taskmaster"}
-            )
-            if config_doc and "system_instruction" in config_doc:
-                system_instruction = config_doc["system_instruction"]
-                print("[Info] Loaded system instruction from MongoDB.")
-            m_client.close()
-        except Exception as e:
-            print(f"[Warning] Failed to fetch system instruction from Mongo: {e}")
-
-    if not system_instruction:
-        try:
-            with open("system_message_taskmaster.md", "r") as f:
-                system_instruction = f.read()
-                print("[Info] Loaded system instruction from local file.")
-        except FileNotFoundError:
-            system_instruction = "You are a helpful task-management assistant."
-            print("[Warning] System instruction file not found. Using default.")
+    try:
+        with open("system_message.md", "r") as f:
+            system_instruction = f.read()
+    except FileNotFoundError:
+        system_instruction = "You are a helpful task-management assistant."
 
     today = datetime.date.today().strftime("%Y-%m-%d")
-
-    # 1. Load existing session history
-    contents = load_chat_history(session_id)
-
-    # 2. Add current user prompt
-    contents.append(
+    contents = [
         types.Content(
             role="user",
             parts=[
@@ -393,7 +214,7 @@ def ask_agent(prompt: str, session_id: str = None) -> str:
                 )
             ],
         )
-    )
+    ]
 
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
@@ -450,23 +271,9 @@ def ask_agent(prompt: str, session_id: str = None) -> str:
         # Add tool results to the conversation history
         contents.append(types.Content(role="user", parts=tool_responses))
 
-    # 3. Save the updated history back to Firestore
-    save_chat_history(session_id, contents)
-
     print("---\nResponse:")
     print(response.text)
-    return session_id, response.text
 
 
 if __name__ == "__main__":
-    import sys
-
-    user_prompt = "What are my most important tasks today?"
-    provided_session_id = None
-
-    if len(sys.argv) > 1:
-        user_prompt = sys.argv[1]
-    if len(sys.argv) > 2:
-        provided_session_id = sys.argv[2]
-
-    session_id, response_text = ask_agent(user_prompt, session_id=provided_session_id)
+    ask_agent("What are my most important tasks today?")

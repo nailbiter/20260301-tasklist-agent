@@ -215,3 +215,5 @@ gstasks.tasks.json
 state.sqlite
 state.sqlite-shm
 state.sqlite-wal
+main.py
+deploy.log
