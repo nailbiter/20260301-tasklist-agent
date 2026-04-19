@@ -15,6 +15,7 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
@@ -233,7 +234,7 @@ def get_system_message():
 tools = [get_mongo_tasks, mark_task_done, postpone_task]
 
 
-def run_agent(state: State, config: dict = None):
+def run_agent(state: State, config: RunnableConfig = None):
     logger = global_logger.getChild("run_agent")
     thread_id = (config or {}).get("configurable", {}).get("thread_id", "unknown")
     model = ChatGoogleGenerativeAI(temperature=0.2, model="gemini-2.5-flash-lite")
