@@ -27,7 +27,9 @@ def run_agent_turn(graph, config, message=None):
     snapshot = graph.get_state(config)
     while snapshot.next:
         messages = snapshot.values.get("messages", [])
-        last_ai = next((m for m in reversed(messages) if hasattr(m, "tool_calls")), None)
+        last_ai = next(
+            (m for m in reversed(messages) if hasattr(m, "tool_calls")), None
+        )
         if last_ai and last_ai.tool_calls:
             calls_desc = ", ".join(
                 f"{tc['name']}({tc['args']})" for tc in last_ai.tool_calls

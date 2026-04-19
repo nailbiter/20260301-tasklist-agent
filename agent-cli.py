@@ -5,14 +5,14 @@
 
        USAGE: (not intended to be directly executed)
 
- DESCRIPTION: 
+ DESCRIPTION:
 
      OPTIONS: ---
 REQUIREMENTS: ---
         BUGS: ---
        NOTES: ---
       AUTHOR: Alex Leontiev (alozz1991@gmail.com)
-ORGANIZATION: 
+ORGANIZATION:
      VERSION: ---
      CREATED: 2026-03-21T20:51:04.083928
     REVISION: ---

@@ -5,7 +5,9 @@ import click
 
 @click.command()
 @click.argument("log_file", default=".logs/conversations.json")
-@click.option("--thread-id", default=None, help="Filter to a single session by thread ID.")
+@click.option(
+    "--thread-id", default=None, help="Filter to a single session by thread ID."
+)
 def main(log_file, thread_id):
     """Read a conversations JSON log and print a plaintext Q&A dialog."""
     entries = []

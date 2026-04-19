@@ -5,19 +5,20 @@
 
        USAGE: (not intended to be directly executed)
 
- DESCRIPTION: 
+ DESCRIPTION:
 
      OPTIONS: ---
 REQUIREMENTS: ---
         BUGS: ---
        NOTES: ---
       AUTHOR: Alex Leontiev (alozz1991@gmail.com)
-ORGANIZATION: 
+ORGANIZATION:
      VERSION: ---
      CREATED: 2025-11-02T12:14:59.651120
     REVISION: ---
 
 ==============================================================================="""
+
 from os import environ
 import logging
 from datetime import datetime, timedelta, date

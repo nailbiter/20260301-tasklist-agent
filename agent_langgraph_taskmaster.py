@@ -250,7 +250,11 @@ def run_agent(state: State, config: RunnableConfig = None):
     if last_human:
         _conv_logger.info(
             last_human.content,
-            extra={"role": "user", "thread_id": thread_id, "content": last_human.content},
+            extra={
+                "role": "user",
+                "thread_id": thread_id,
+                "content": last_human.content,
+            },
         )
     logger.debug(dict(request=messages[-1] if messages else None))
     if not messages or not isinstance(messages[0], SystemMessage):
@@ -261,7 +265,11 @@ def run_agent(state: State, config: RunnableConfig = None):
     if response.content:
         _conv_logger.info(
             response.content,
-            extra={"role": "assistant", "thread_id": thread_id, "content": response.content},
+            extra={
+                "role": "assistant",
+                "thread_id": thread_id,
+                "content": response.content,
+            },
         )
     return {"messages": [response]}
 

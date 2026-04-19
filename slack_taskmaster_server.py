@@ -44,7 +44,9 @@ def _get_app():
     if _langgraph_app is None:
         with _init_lock:
             if _langgraph_app is None:
-                checkpointer = FirestoreSaver(project_id=os.environ["GOOGLE_CLOUD_PROJECT"])
+                checkpointer = FirestoreSaver(
+                    project_id=os.environ["GOOGLE_CLOUD_PROJECT"]
+                )
                 _langgraph_app = workflow.compile(
                     checkpointer=checkpointer, interrupt_before=["action"]
                 )
@@ -57,7 +59,9 @@ def _get_sessions_col():
         with _init_lock:
             if _sessions_col is None:
                 meta_client = MongoClient(os.environ["FOR_METADATA_MONGO_URI"])
-                _sessions_col = meta_client["logistics"]["20260321-agent-firestore-sessions"]
+                _sessions_col = meta_client["logistics"][
+                    "20260321-agent-firestore-sessions"
+                ]
     return _sessions_col
 
 
@@ -118,12 +122,14 @@ def _verify_signature(req) -> bool:
     signature = req.headers.get("X-Slack-Signature", "")
     try:
         if abs(time.time() - int(ts)) > 300:
-            logger.error(f"Signature verification failed: timestamp too old (ts={ts}, now={time.time()})")
+            logger.error(
+                f"Signature verification failed: timestamp too old (ts={ts}, now={time.time()})"
+            )
             return False
     except (ValueError, TypeError):
         logger.error(f"Signature verification failed: invalid timestamp (ts={ts})")
         return False
-    
+
     body = req.get_data(as_text=True)
     base = f"v0:{ts}:{body}"
     expected = (
@@ -132,7 +138,7 @@ def _verify_signature(req) -> bool:
             SLACK_SIGNING_SECRET.encode(), base.encode(), hashlib.sha256
         ).hexdigest()
     )
-    
+
     result = hmac.compare_digest(expected, signature)
     if not result:
         logger.error(f"Signature verification failed!")
@@ -225,9 +231,7 @@ def _reject_action(user_id: str, thread_id: str, reply_fn: Callable[[str], None]
                 ToolMessage(content="Action cancelled by user.", tool_call_id=tc["id"])
                 for tc in last_ai.tool_calls
             ]
-            _get_app().update_state(
-                config, {"messages": cancel_msgs}, as_node="action"
-            )
+            _get_app().update_state(config, {"messages": cancel_msgs}, as_node="action")
             for _ in _get_app().stream(None, config):
                 pass
         _clear_pending(user_id)
@@ -272,7 +276,7 @@ def _dispatch(
 
     logger.debug(dict(who="_dispatch", user_id=user_id, text=text, cmd=cmd))
 
-    if cmd in ("reset", "/reset", "reset session", "reset-session"):
+    if cmd in ("reset", "/reset", "reset session", "reset-session", "/reset-session"):
         _reset_session(user_id)
         reset_reply("Session reset. Starting fresh!")
         return
@@ -308,7 +312,7 @@ def _dispatch(
 @app.post("/")
 def slack_events():
     data = request.get_json(silent=True) or {}
-    
+
     # Handle Slack URL verification challenge without signature verification
     # if it is a challenge request.
     if data.get("type") == "url_verification":
@@ -332,12 +336,17 @@ def slack_events():
     channel = event.get("channel", "")
     thread_ts = event.get("thread_ts") or event.get("ts")
     reply_fn = _channel_reply(channel, thread_ts)
-    threading.Thread(target=_dispatch, args=(user_id, text, reply_fn, reply_fn), daemon=True).start()
+    threading.Thread(
+        target=_dispatch, args=(user_id, text, reply_fn, reply_fn), daemon=True
+    ).start()
     return jsonify({"ok": True})
 
 
 @app.post("/slack/ingress")
 def slack_ingress():
+    logger.debug(
+        dict(headers=request.headers, is_json=request.is_json, request=request)
+    )
     if request.headers.get("X-Slack-Retry-Num"):
         return "OK", 200
 
@@ -369,14 +378,18 @@ def slack_ingress():
         channel = event.get("channel", "")
         thread_ts = event.get("thread_ts") or event.get("ts")
         reply_fn = _channel_reply(channel, thread_ts)
-        threading.Thread(target=_dispatch, args=(user_id, text, reply_fn, reply_fn), daemon=True).start()
+        threading.Thread(
+            target=_dispatch, args=(user_id, text, reply_fn, reply_fn), daemon=True
+        ).start()
     else:
         data = request.form
         user_id = data.get("user_id", "unknown")
-        text = data.get("text", "")
+        text = data.get("text", "").strip() or data.get("command", "").strip()
         response_url = data.get("response_url", "")
         reply_fn = _response_url_reply(response_url, ephemeral=True)
-        threading.Thread(target=_dispatch, args=(user_id, text, reply_fn, reply_fn), daemon=True).start()
+        threading.Thread(
+            target=_dispatch, args=(user_id, text, reply_fn, reply_fn), daemon=True
+        ).start()
         return jsonify({"text": "Got it, working on it..."}), 200
 
     return jsonify({"ok": True})
