@@ -10,5 +10,29 @@
     "command": "python .claude/statusline.py",
     "padding": 0,
     "type": "command"
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hook-save-request.py 2>/dev/null || true",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hook-save-reply.py 2>/dev/null || true",
+            "async": true
+          }
+        ]
+      }
+    ]
   }
 }
