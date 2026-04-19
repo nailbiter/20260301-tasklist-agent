@@ -35,6 +35,7 @@ def get_configured_logger(
             "name",
             "levelname",
             "asctime",
+            "lineno",
             "message",
         ]
     ),

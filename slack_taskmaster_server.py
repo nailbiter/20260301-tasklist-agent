@@ -65,8 +65,12 @@ def _get_sessions_col():
     return _sessions_col
 
 
+def _latest_session_doc(user_id: str):
+    return _get_sessions_col().find_one({"user_id": user_id}, sort=[("dt", -1)])
+
+
 def _get_or_create_session(user_id: str) -> str:
-    doc = _get_sessions_col().find_one({"user_id": user_id})
+    doc = _latest_session_doc(user_id)
     if doc:
         return doc["session_id"]
     session_id = f"taskmaster_langgraph_{uuid.uuid4()}"
@@ -83,37 +87,38 @@ def _get_or_create_session(user_id: str) -> str:
 
 def _reset_session(user_id: str) -> str:
     session_id = f"taskmaster_langgraph_{uuid.uuid4()}"
-    _get_sessions_col().update_one(
-        {"user_id": user_id},
+    _get_sessions_col().insert_one(
         {
-            "$set": {
-                "session_id": session_id,
-                "dt": datetime.datetime.utcnow(),
-                "pending_action": None,
-            }
-        },
-        upsert=True,
+            "user_id": user_id,
+            "session_id": session_id,
+            "prefix": "taskmaster_langgraph",
+            "dt": datetime.datetime.utcnow(),
+        }
     )
     logger.info(f"Session reset for user={user_id}, new session_id={session_id}")
     return session_id
 
 
 def _set_pending(user_id: str, calls_desc: str):
-    _get_sessions_col().update_one(
-        {"user_id": user_id},
-        {"$set": {"pending_action": calls_desc}},
-    )
+    doc = _latest_session_doc(user_id)
+    if doc:
+        _get_sessions_col().update_one(
+            {"_id": doc["_id"]},
+            {"$set": {"pending_action": calls_desc}},
+        )
 
 
 def _clear_pending(user_id: str):
-    _get_sessions_col().update_one(
-        {"user_id": user_id},
-        {"$unset": {"pending_action": ""}},
-    )
+    doc = _latest_session_doc(user_id)
+    if doc:
+        _get_sessions_col().update_one(
+            {"_id": doc["_id"]},
+            {"$unset": {"pending_action": ""}},
+        )
 
 
 def _get_pending(user_id: str) -> str | None:
-    doc = _get_sessions_col().find_one({"user_id": user_id}, {"pending_action": 1})
+    doc = _latest_session_doc(user_id)
     return doc.get("pending_action") if doc else None
 
 

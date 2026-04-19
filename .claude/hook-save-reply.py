@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import sys, json, os, glob
+import sys, json, os, glob, time
 from datetime import datetime
 
 data = json.load(sys.stdin)
@@ -9,6 +9,7 @@ d = f'.claude-history/{sid}'
 os.makedirs(d, exist_ok=True)
 proj = '-Users-nailbiter-Documents-forgithub-20260301-tasklist-agent'
 transcript_dir = os.path.expanduser(f'~/.claude/projects/{proj}')
+time.sleep(3)
 msgs = []
 if os.path.isdir(transcript_dir):
     for f in glob.glob(f'{transcript_dir}/*.jsonl'):
