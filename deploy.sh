@@ -25,3 +25,4 @@ gcloud run deploy $SERVICE_NAME \
 
 echo "--- Deployment Complete ---"
 gcloud run services describe $SERVICE_NAME --platform managed --region $REGION --format 'value(status.url)'
+echo "$(date '+%Y-%m-%d %H:%M:%S') deployed $SERVICE_NAME" >> deploy.log

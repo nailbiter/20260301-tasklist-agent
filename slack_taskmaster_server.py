@@ -115,19 +115,32 @@ def _get_pending(user_id: str) -> str | None:
 
 def _verify_signature(req) -> bool:
     ts = req.headers.get("X-Slack-Request-Timestamp", "")
+    signature = req.headers.get("X-Slack-Signature", "")
     try:
         if abs(time.time() - int(ts)) > 300:
+            logger.error(f"Signature verification failed: timestamp too old (ts={ts}, now={time.time()})")
             return False
     except (ValueError, TypeError):
+        logger.error(f"Signature verification failed: invalid timestamp (ts={ts})")
         return False
-    base = f"v0:{ts}:{req.get_data(as_text=True)}"
+    
+    body = req.get_data(as_text=True)
+    base = f"v0:{ts}:{body}"
     expected = (
         "v0="
         + hmac.new(
             SLACK_SIGNING_SECRET.encode(), base.encode(), hashlib.sha256
         ).hexdigest()
     )
-    return hmac.compare_digest(expected, req.headers.get("X-Slack-Signature", ""))
+    
+    result = hmac.compare_digest(expected, signature)
+    if not result:
+        logger.error(f"Signature verification failed!")
+        logger.error(f"  Timestamp: {ts}")
+        logger.error(f"  Signature: {signature}")
+        logger.error(f"  Expected:  {expected}")
+        # logger.debug(f"  Base string: {base}") # Careful with secrets if logging base
+    return result
 
 
 def _post_final_reply(thread_id: str, reply_fn: Callable[[str], None]):
@@ -294,13 +307,16 @@ def _dispatch(
 
 @app.post("/")
 def slack_events():
+    data = request.get_json(silent=True) or {}
+    
+    # Handle Slack URL verification challenge without signature verification
+    # if it is a challenge request.
+    if data.get("type") == "url_verification":
+        logger.info("Handling Slack URL verification challenge")
+        return jsonify({"challenge": data["challenge"]})
+
     if not _verify_signature(request):
         return jsonify({"error": "invalid signature"}), 403
-
-    data = request.json or {}
-
-    if data.get("type") == "url_verification":
-        return jsonify({"challenge": data["challenge"]})
 
     event = data.get("event", {})
 
@@ -316,7 +332,7 @@ def slack_events():
     channel = event.get("channel", "")
     thread_ts = event.get("thread_ts") or event.get("ts")
     reply_fn = _channel_reply(channel, thread_ts)
-    _dispatch(user_id, text, reply_fn, reply_fn)
+    threading.Thread(target=_dispatch, args=(user_id, text, reply_fn, reply_fn), daemon=True).start()
     return jsonify({"ok": True})
 
 
@@ -325,14 +341,18 @@ def slack_ingress():
     if request.headers.get("X-Slack-Retry-Num"):
         return "OK", 200
 
+    # For JSON requests, we can check for url_verification before signature
+    if request.is_json:
+        data = request.get_json(silent=True) or {}
+        if data.get("type") == "url_verification":
+            logger.info("Handling Slack URL verification challenge (ingress)")
+            return jsonify({"challenge": data["challenge"]})
+
     if not _verify_signature(request):
         return jsonify({"error": "invalid signature"}), 403
 
     if request.is_json:
         data = request.json or {}
-
-        if data.get("type") == "url_verification":
-            return jsonify({"challenge": data["challenge"]})
 
         event = data.get("event", {})
         if (
@@ -349,14 +369,14 @@ def slack_ingress():
         channel = event.get("channel", "")
         thread_ts = event.get("thread_ts") or event.get("ts")
         reply_fn = _channel_reply(channel, thread_ts)
-        _dispatch(user_id, text, reply_fn, reply_fn)
+        threading.Thread(target=_dispatch, args=(user_id, text, reply_fn, reply_fn), daemon=True).start()
     else:
         data = request.form
         user_id = data.get("user_id", "unknown")
         text = data.get("text", "")
         response_url = data.get("response_url", "")
         reply_fn = _response_url_reply(response_url, ephemeral=True)
-        _dispatch(user_id, text, reply_fn, reply_fn)
+        threading.Thread(target=_dispatch, args=(user_id, text, reply_fn, reply_fn), daemon=True).start()
         return jsonify({"text": "Got it, working on it..."}), 200
 
     return jsonify({"ok": True})
