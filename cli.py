@@ -26,7 +26,17 @@ def run_agent_turn(graph, config, message=None):
     # Check for interrupts (Human-in-the-loop)
     snapshot = graph.get_state(config)
     while snapshot.next:
-        click.echo(f"\n[!] INTERRUPT: Agent is about to execute: {snapshot.next}")
+        messages = snapshot.values.get("messages", [])
+        last_ai = next(
+            (m for m in reversed(messages) if hasattr(m, "tool_calls")), None
+        )
+        if last_ai and last_ai.tool_calls:
+            calls_desc = ", ".join(
+                f"{tc['name']}({tc['args']})" for tc in last_ai.tool_calls
+            )
+            click.echo(f"\n[!] INTERRUPT: Agent is about to call: {calls_desc}")
+        else:
+            click.echo(f"\n[!] INTERRUPT: Agent is about to execute: {snapshot.next}")
         if click.confirm("Do you want to proceed?"):
             for event in graph.stream(None, config, stream_mode="values"):
                 pass
@@ -60,12 +70,24 @@ def main(message, session_id, list_sessions):
             try:
                 with sqlite3.connect(DB_PATH) as conn:
                     cursor = conn.cursor()
-                    cursor.execute("SELECT DISTINCT thread_id FROM checkpoints")
-                    threads = cursor.fetchall()
-                    if not threads:
-                        click.echo(" (No sessions found)")
-                    for t in threads:
-                        click.echo(f" - {t[0]}")
+                    cursor.execute(
+                        "SELECT thread_id FROM checkpoints GROUP BY thread_id ORDER BY MAX(checkpoint_id) DESC"
+                    )
+                    threads = [row[0] for row in cursor.fetchall()]
+                if not threads:
+                    click.echo(" (No sessions found)")
+                for t in threads:
+                    state = graph.get_state({"configurable": {"thread_id": t}})
+                    last_user = next(
+                        (
+                            m.content
+                            for m in reversed(state.values.get("messages", []))
+                            if hasattr(m, "type") and m.type == "human"
+                        ),
+                        None,
+                    )
+                    suffix = f': "{last_user}"' if last_user else ""
+                    click.echo(f" - {t}{suffix}")
             except sqlite3.OperationalError:
                 click.echo(" (No sessions found - database not yet initialized)")
             return
@@ -98,4 +120,3 @@ def main(message, session_id, list_sessions):
 
 if __name__ == "__main__":
     main()
-a

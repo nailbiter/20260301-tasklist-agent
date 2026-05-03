@@ -1,14 +1,1 @@
-{
-  "autoCompact": true,
-  "autoCompactThreshold": 0.3,
-  "availableModels": [
-    "gemini-3-flash",
-    "gemini-pro",
-    "gemini-flash"
-  ],
-  "statusLine": {
-    "command": "python .claude/statusline.py",
-    "padding": 0,
-    "type": "command"
-  }
-}
+/Users/nailbiter/for/.claude/settings.json
