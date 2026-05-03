@@ -1,129 +1,125 @@
-# Project Overview: CLI Task Agent
+# CLAUDE.md
 
-This project is a command-line LLM agent powered by Google Gemini (specifically `gemini-2.5-flash-lite`) designed to aggregate and manage tasks from various sources: **Jira**, a **custom MongoDB** database, and **Mailbox (IMAP)**. It provides a unified interface for a user to query their daily priorities, work tasks, personal to-dos, and emails.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Core Technologies
-- **Language:** Python 3.10+
-- **LLM SDK:** `google-genai` (v0.3.0+)
-- **Integrations:**
-    - **Jira:** via `requests` and the `jira` Python library.
-    - **MongoDB:** via `pymongo`.
-    - **Email:** via standard `imaplib`.
-- **Environment Management:** `python-dotenv`.
-- **Formatting:** `black` and `isort`.
+## Overview
 
-## Project Structure
-- `agent-taskmaster.py`: The main entry point for tasks. It initializes the Gemini client, defines tool-calling functions for Jira and MongoDB, and handles the conversation loop.
-- `agent-mailmaster.py`: The entry point for email management. It provides tools to read recent emails, mark them as read, and label them (Gmail-specific).
-- `list-sprints.py`: A utility script to list active and future sprints from the configured Jira board.
-- `utils.py`: Contains shared utility functions, notably a customized logging setup.
-- `system_message.md`: Defines the "persona" and core directives for the Taskmaster agent.
-- `system_message_mail.md`: Defines the "persona" and core directives for the Mailmaster agent.
-- `pyproject.toml`: Configuration for development tools like `isort` and `black`.
-- `requirements.txt`: Lists Python dependencies.
+A CLI + Slack LLM agent powered by Google Gemini (`gemini-2.5-flash-lite`) that aggregates and manages tasks from Jira and MongoDB. The primary production path is a **LangGraph**-based graph (`agent_langgraph_taskmaster.py`) consumed by both `cli.py` (local interactive use) and `slack_taskmaster_server.py` (Cloud Run deployment).
 
----
+## Running the Agents
 
-## Building and Running
-
-### Prerequisites
-Ensure you have Python 3.10+ installed and a virtual environment active.
-
-### Installation
 ```bash
-pip install -r requirements.txt
-```
+# Primary CLI (interactive REPL, human-in-the-loop, SQLite checkpointer)
+python cli.py                          # interactive REPL
+python cli.py "What are my tasks?"    # single-shot
+python cli.py --resume <session-id>   # resume session
+python cli.py --list-sessions         # list saved sessions
 
-### Configuration
-Create a `.env` file in the root directory with the following variables:
-```env
-# Gemini API
-GEMINI_API_KEY=your_gemini_api_key
+# LangGraph Studio dev server (uses langgraph.json)
+uv run langgraph dev
 
-# Jira Integration
-JIRA_URL=https://your-domain.atlassian.net
-JIRA_EMAIL=your-email@example.com
-JIRA_API_TOKEN=your_jira_api_token
-JIRA_BOARD_ID=your_board_id
+# Legacy direct-Gemini agents (no session persistence)
+python agent_taskmaster.py
+python agent_mailmaster.py            # requires Firestore; accepts prompt + session_id via argv
 
-# MongoDB Integration
-MONGO_URI=your_mongodb_connection_string
-MONGO_DB_NAME=gstasks (optional, defaults to gstasks)
-
-# Email Integration (IMAP)
-IMAP_SERVER=imap.gmail.com
-EMAIL_USER=your-email@example.com
-EMAIL_PASSWORD=your_app_password
-```
-
-### Running the Agents
-
-#### Taskmaster
-To start the task agent and ask a query:
-```bash
-python agent-taskmaster.py
-```
-
-#### Mailmaster
-To start the email agent and ask a query:
-```bash
-python agent-mailmaster.py
-```
-
-### Listing Jira Sprints
-To see active and future sprints:
-```bash
+# Utility
 python list-sprints.py
 ```
 
----
+## Dependency Management
 
-## Development Conventions
+This project uses `uv`, not `pip` directly:
 
-- **Code Style:** The project follows `black` formatting and `isort` for import sorting.
-- **Logging:** Use `utils.get_configured_logger` for consistent logging across the application.
-- **Tool Calling:** When adding new capabilities, define them as functions in the respective agent script and include them in the `tools` list passed to `types.GenerateContentConfig`. Ensure they have clear docstrings as these are used by Gemini to understand the tool.
-- **System Instructions:** Any changes to the agent's behavior, tone, or high-level logic should be made in the corresponding `system_message*.md` file.
-
-## Slack Integration
-
-```markdown
-## Slack Integration (Middleware)
-
-The project includes a serverless middleware to funnel Slack messages from a specific channel into the automation pipeline.
-
-### Architecture
-- **Trigger:** Slack Events API (specifically `message.channels`).
-- **Hosting:** Google Cloud Run (`us-east1`).
-- **Security:** HMAC SHA256 signature verification via `X-Slack-Signature`.
-- **Filtering:** The middleware only processes messages from a specific `TARGET_CHANNEL_ID` and ignores bot users to prevent infinite loops.
-
-### Components
-- `main.py`: A Flask-based entry point that handles the Slack "challenge" handshake, verifies request authenticity, and executes logic based on message content.
-- `deploy.sh`: A shell script to deploy the service to Cloud Run with the necessary environment variables.
-- `Dockerfile`: Containerizes the Flask app using `gunicorn` for production-grade concurrency.
-
-### Configuration (Add to .env)
-```env
-# Slack Integration
-SLACK_SIGNING_SECRET=your_signing_secret
-SLACK_BOT_TOKEN=xoxb-your-bot-token
-TARGET_CHANNEL_ID=C0123ABC456
-PORT=8080
+```bash
+uv sync            # install from uv.lock
+uv add <package>   # add dependency
 ```
 
-### Deployment
+## Code Style
+
+```bash
+black .
+isort .
+```
+
+## Architecture
+
+### LangGraph Graph (`agent_langgraph_taskmaster.py`)
+
+The core graph with three nodes:
+
+- **`agent`** — calls Gemini via `langchain_google_genai.ChatGoogleGenerativeAI` with tools bound.
+- **`action`** — executes write tools (`mark_task_done`, `postpone_task`); always preceded by a human-in-the-loop interrupt.
+- **`read_action`** — executes read tools (`get_mongo_tasks`) without interruption.
+
+`should_continue` routes: if the last AI message contains write tool calls → `"action"` (interrupt), read tool calls → `"read_action"`, no calls → `END`.
+
+Tools available to the graph:
+- `get_mongo_tasks` — queries the `tasks` collection with optional date filters; resolves tag UUIDs to names.
+- `mark_task_done` — sets `status = "DONE"` by UUID.
+- `postpone_task` — updates `scheduled_date`; accepts UUID prefix.
+
+The system prompt is rendered from `system_message_taskmaster.jinja.md` (a symlink to a private repo) via Jinja2 with today's date injected.
+
+### `cli.py`
+
+Click CLI over the LangGraph graph. Persists state in `state.sqlite` via `SqliteSaver`. Implements the human-in-the-loop loop: after each stream, checks `snapshot.next`; if interrupted, prompts the user for `confirm`/`cancel` before resuming.
+
+### `slack_taskmaster_server.py`
+
+Flask server deployed to Cloud Run. Uses `FirestoreSaver` as the LangGraph checkpointer instead of SQLite. Session IDs are mapped per Slack `user_id` in a MongoDB `logistics/20260321-agent-firestore-sessions` collection. Human-in-the-loop works via Slack messages: agent sends "About to call: …\nReply *confirm* to proceed", user replies "confirm" or "reject".
+
+Slack commands: `reset` / `confirm` / `reject`.
+
+Two routes: `POST /` (Slack Events API) and `POST /slack/ingress` (also accepts slash-command form-encoded requests).
+
+### `agent_mailmaster.py`
+
+Older single-file agent using the `google-genai` SDK directly (not LangGraph). Persists chat history in Firestore `mail_sessions`. Tools: `read_recent_emails`, `mark_as_read`, `label_emails` (Gmail IMAP).
+
+## Deployment
+
 ```bash
 chmod +x deploy.sh
-./deploy.sh
+./deploy.sh    # deploys slack_taskmaster_server.py to Cloud Run (us-east1)
 ```
+
+`deploy.sh` resolves the `system_message_taskmaster.jinja.md` symlink before the Docker build (the Dockerfile cannot follow symlinks from outside the build context).
+
+## Configuration (`.env`)
+
+```env
+GEMINI_API_KEY=...
+GENAI_GOOGLE_CLOUD_PROJECT=...
+GOOGLE_CLOUD_PROJECT=...
+
+JIRA_URL=https://your-domain.atlassian.net
+JIRA_EMAIL=...
+JIRA_API_TOKEN=...
+JIRA_BOARD_ID=...
+
+MONGO_URI=...
+MONGO_DB_NAME=gstasks        # optional, defaults to gstasks
+FOR_METADATA_MONGO_URI=...   # separate cluster for session metadata (Slack server)
+
+IMAP_SERVER=imap.gmail.com
+EMAIL_USER=...
+EMAIL_PASSWORD=...
+
+SLACK_SIGNING_SECRET=...
+SLACK_BOT_TOKEN=xoxb-...
+TARGET_CHANNEL_ID=...
+SERVICE_NAME=...
+PROJECT_ID=...
 ```
 
----
+## Logging
 
-### Pro-tip for your CLI Agent:
-Since you are using `gemini-2.5-flash-lite`, it will be very efficient at parsing this documentation. When you start the next session, you can simply say: 
+Use `utils.get_configured_logger` (or `common/logging.py` for shared modules). It sets up a stderr handler plus optional file handler (text + JSON side-by-side). Pass `log_to_file=` to get persistent logs; `file_mode="a"` for append (e.g. the conversation log).
 
-> "I've added a Slack Middleware section to GEMINI.md. We currently have a basic 'echo' logic in `main.py`. I want to connect this middleware to my existing Taskmaster tools."
+## Adding New Tools
 
-Is there anything else you'd like to adjust in the project structure before you switch over to the CLI?
+1. Define the function decorated with `@tool` (LangGraph path) in `agent_langgraph_taskmaster.py`.
+2. Add to the `tools` list near the top of the file.
+3. Register in `action_node` (write tools) or let `read_action` handle it.
+4. Update `should_continue` if the routing logic needs to change.
