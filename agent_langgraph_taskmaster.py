@@ -28,12 +28,18 @@ from utils import get_configured_logger
 load_dotenv()
 
 
-def get_mongo_client():
-    return MongoClient(
-        os.getenv("MONGO_URI"),
-        tlsAllowInvalidCertificates=True,
-        tlsAllowInvalidHostnames=True,
-    )
+_mongo_client: MongoClient | None = None
+
+
+def get_mongo_client() -> MongoClient:
+    global _mongo_client
+    if _mongo_client is None:
+        _mongo_client = MongoClient(
+            os.getenv("MONGO_URI"),
+            tlsAllowInvalidCertificates=True,
+            tlsAllowInvalidHostnames=True,
+        )
+    return _mongo_client
 
 
 # logging
@@ -67,7 +73,6 @@ def mark_task_done(uuid: str):
     db_mongo = client[os.getenv("MONGO_DB_NAME") or "gstasks"]
     collection = db_mongo["tasks"]
     result = collection.update_one({"uuid": uuid}, {"$set": {"status": "DONE"}})
-    client.close()
     return f"Task {uuid} marked as DONE"
 
 
@@ -83,7 +88,6 @@ def postpone_task(uuid: str, new_date: str):
     result = collection.update_one(
         {"uuid": {"$regex": f"^{uuid}"}}, {"$set": {"scheduled_date": new_dt}}
     )
-    client.close()
     if result.matched_count == 0:
         return f"No task found with UUID prefix '{uuid}'"
     return f"Task {uuid} postponed to {new_date}"
@@ -202,7 +206,6 @@ def get_mongo_tasks(
                     t[k] = v.strftime("%Y-%m-%d")
                 elif isinstance(v, float) and (v != v):  # check for NaN
                     t[k] = None
-        client.close()
         logger.debug(dict(tasks=tasks))
 
         return json.dumps(tasks)
@@ -222,23 +225,38 @@ class State(TypedDict):
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+_system_message: SystemMessage | None = None
+_system_message_date: str | None = None
 
-def get_system_message():
+
+def get_system_message() -> SystemMessage:
+    global _system_message, _system_message_date
     today = datetime.date.today().strftime("%Y-%m-%d")
-    path = os.path.join(_SCRIPT_DIR, "system_message_taskmaster.jinja.md")
-    with open(path, "r") as f:
-        template = Template(f.read())
-    return SystemMessage(content=template.render(date=today))
+    if _system_message is None or _system_message_date != today:
+        path = os.path.join(_SCRIPT_DIR, "system_message_taskmaster.jinja.md")
+        with open(path, "r") as f:
+            template = Template(f.read())
+        _system_message = SystemMessage(content=template.render(date=today))
+        _system_message_date = today
+    return _system_message
 
 
 tools = [get_mongo_tasks, mark_task_done, postpone_task]
+
+# Module-level singletons — created once at startup, reused across all requests.
+# thinking_budget=0 disables Gemini 2.5's thinking mode (default-on), which was
+# adding 30–90s of latency per call for simple task-list queries.
+_model = ChatGoogleGenerativeAI(
+    temperature=1,  # required by Gemini API when thinking_budget=0
+    model="gemini-2.5-flash-lite",
+    thinking_budget=0,
+)
+_model_with_tools = _model.bind_tools(tools)
 
 
 def run_agent(state: State, config: RunnableConfig = None):
     logger = global_logger.getChild("run_agent")
     thread_id = (config or {}).get("configurable", {}).get("thread_id", "unknown")
-    model = ChatGoogleGenerativeAI(temperature=0.2, model="gemini-2.5-flash-lite")
-    model_with_tools = model.bind_tools(tools)
 
     system_msg = get_system_message()
 
@@ -260,7 +278,7 @@ def run_agent(state: State, config: RunnableConfig = None):
     if not messages or not isinstance(messages[0], SystemMessage):
         messages = [system_msg] + messages
 
-    response = model_with_tools.invoke(messages)
+    response = _model_with_tools.invoke(messages)
     logger.debug(dict(response=response))
     if response.content:
         _conv_logger.info(

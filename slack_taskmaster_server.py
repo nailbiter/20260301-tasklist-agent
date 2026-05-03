@@ -168,12 +168,16 @@ def _run_agent(
 ):
     config = {"configurable": {"thread_id": thread_id}}
     try:
+        t0 = time.time()
         for _ in _get_app().stream(
             {"messages": [HumanMessage(content=text)]}, config=config
         ):
             pass
+        logger.info(f"stream() done in {time.time()-t0:.1f}s thread={thread_id}")
 
+        t1 = time.time()
         snapshot = _get_app().get_state(config)
+        logger.info(f"get_state() done in {time.time()-t1:.1f}s")
         if snapshot.next:
             # Interrupted before an edit tool — ask for confirmation
             messages = snapshot.values.get("messages", [])
